@@ -1,1 +1,159 @@
+name: PR Security Check + Approve
 
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  security-scan:
+    if: startsWith(github.head_ref, 'feature/') && startsWith(github.base_ref, 'wip/')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout PR code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+ # ── 2. Credential Scan (Gitleaks) ───────────────────────
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
+ 
+      #  Trivy FS Scan
+      - name: Run Trivy FS Scan
+        uses: aquasecurity/trivy-action@v0.20.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          exit-code: 1
+          severity: CRITICAL,HIGH
+      # ── Setup .NET ────────────────────────────────────────
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Restore
+        run: dotnet restore DemoApp.sln
+
+      # ── 6. Build  ────────────────────────────────────────────
+      #    Must come BEFORE lint and test so binaries exist
+      - name: Build
+        run: dotnet build DemoApp.sln --no-restore
+
+      # ── 7. Lint (format check) ───────────────────────────────
+      #    Runs after build so all generated files are present
+      - name: Lint (format check)
+        run: dotnet format DemoApp.sln --verify-no-changes || echo "⚠️ Lint issues found"
+
+      # ── 8. Unit Tests ─────────────────────────────────────────
+      #    --no-build is safe here because step 6 already built
+      - name: Unit Tests
+        run: dotnet test DemoApp.sln --verbosity normal
+
+ #       # 🔐 Credential Scanning (FIXED)
+ #     - name: Credential Scan (Gitleaks)
+ #       uses: gitleaks/gitleaks-action@v2
+ #       with:
+ #         args: detect --no-git --source=. --redact
+
+ #     - uses: SonarSource/sonarqube-scan-action@v6
+ #       env:
+ #         SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+ #         SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+
+      # 🔥 Quality Gate Check (IMPORTANT)
+ #     - name: SonarQube Quality Gate
+ #       uses: sonarsource/sonarqube-quality-gate-action@v1
+ #       with:
+ #         pollingTimeoutSec: 300
+ #       env:
+ #         SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          
+     
+  
+
+      # ✅ Approve PR ONLY if above step succeeds
+      - name: Approve PR
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUMBER=${{ github.event.pull_request.number }}
+
+          echo "Approving PR #$PR_NUMBER"
+
+          gh pr review $PR_NUMBER --approve
+      
+      # ✅ Auto Merge PR
+      - name: Merge PR
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+        run: |
+          PR_NUMBER=${{ github.event.pull_request.number }}
+
+          echo "Merging PR #$PR_NUMBER"
+
+          gh pr merge $PR_NUMBER \
+            --merge \
+#           --delete-branch    
+      # ❌ Optional: log failure
+      - name: If failed
+        if: failure()
+        run: |
+          echo "❌ Gitleaks failed. PR will NOT be approved."
+    ###################################################################################################
+
+
+
+
+
+      # ── 5. Restore ───────────────────────────────────────────
+
+      # ── 9. Integration Tests (stub) ──────────────────────────
+      - name: Integration Tests
+        run: echo "ℹ️ Skipping integration tests — replace with real tests later"
+
+      # ── 10. Publish ───────────────────────────────────────────
+      - name: Publish
+        run: dotnet publish DemoApp/DemoApp.csproj -c Release -o out
+
+      # ── 11. Static Code Analysis (SonarQube — optional) ──────
+      # Uncomment when SONAR_TOKEN and SONAR_HOST_URL are set
+      # - name: Sonar Scan
+      #   uses: SonarSource/sonarqube-scan-action@v6
+      #   env:
+      #     SONAR_TOKEN:    ${{ secrets.SONAR_TOKEN }}
+      #     SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+
+      # ── 12. Docker Build ──────────────────────────────────────
+      - name: Build Docker
+        run: |
+          docker build -t demo-dotnet:${{ github.run_number }} .
+          docker tag demo-dotnet:${{ github.run_number }} demo-dotnet:latest
+
+      # ── 13. Docker Image Scan ─────────────────────────────────
+      - name: Trivy Image Scan
+        uses: aquasecurity/trivy-action@v0.20.0
+        with:
+          image-ref:      demo-dotnet:${{ github.run_number }}
+          severity:       HIGH,CRITICAL
+          exit-code:      1
+          ignore-unfixed: true   # skip CVEs with no fix available (e.g. OS-level libc)
+
+      # ── 14. Summary ───────────────────────────────────────────
+      - name: Pipeline Summary
+        if: always()
+        run: |
+          echo "================================================"
+          echo "  Full CI Pipeline Complete"
+          echo "  Run    : #${{ github.run_number }}"
+          echo "  Branch : ${{ github.ref_name }}"
+          echo "  Commit : ${{ github.sha }}"
+          echo "================================================"
