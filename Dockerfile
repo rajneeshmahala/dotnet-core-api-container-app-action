@@ -1,7 +1,7 @@
 # ── Stage 1: Build ──────────────────────────────────────────────
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 WORKDIR /src
-
+    
 # Copy project file for restore layer cache
 COPY DemoApp/DemoApp.csproj DemoApp/
 
