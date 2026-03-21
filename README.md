@@ -15,7 +15,7 @@ DemoApp.sln
 │   ├── appsettings.json
 │   └── DemoApp.csproj
 ├── DemoApp.Tests/                  # xUnit integration + unit tests
-│   ├── ProductsApiTests.cs
+│   ├── ProductsApiTests.csed
 │   └── DemoApp.Tests.csproj
 ├── Dockerfile                      # Multi-stage build (sdk → aspnet runtime)
 ├── .dockerignore
