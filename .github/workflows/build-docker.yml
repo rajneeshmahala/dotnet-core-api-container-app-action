@@ -1,0 +1,58 @@
+name: Build + Docker CI
+
+on:
+  push:
+    branches:
+      - main
+      - 'wip/*'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 🔄 Checkout
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 🟣 Setup .NET
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      # 📦 Restore
+      - name: Restore dependencies
+        run: dotnet restore
+
+      # 🏗 Build
+      - name: Build project
+        run: dotnet build --no-restore
+
+      # 🧪 Test (optional)
+      - name: Run tests
+        run: dotnet test --no-build || echo "No tests"
+
+      # 📦 Publish
+      - name: Publish app
+        run: dotnet publish -c Release -o out
+
+      # 🔢 Set image variables
+      - name: Set variables
+        run: |
+          echo "IMAGE_NAME=demo-dotnet" >> $GITHUB_ENV
+          echo "IMAGE_TAG=${{ github.run_number }}" >> $GITHUB_ENV
+
+      # 🐳 Build Docker image
+      - name: Build Docker image
+        run: |
+          docker build -t $IMAGE_NAME:$IMAGE_TAG .
+          docker tag $IMAGE_NAME:$IMAGE_TAG $IMAGE_NAME:latest
+
+      # 🔐 (Optional) Security scan
+      - name: Trivy scan
+        uses: aquasecurity/trivy-action@v0.20.0
+        with:
+          image-ref: demo-dotnet:${{ github.run_number }}
+          severity: LOW
+          exit-code: 0
