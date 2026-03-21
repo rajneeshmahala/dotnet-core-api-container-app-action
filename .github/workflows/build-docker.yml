@@ -13,8 +13,8 @@ name: Full CI Pipeline (.NET + Security)
 on:
   push:
     branches:
-      - main
-      - 'wip/*'
+      - mdain
+      - 'widp/*'
   pull_request:
 
 jobs:
