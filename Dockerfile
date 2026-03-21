@@ -2,19 +2,17 @@
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 WORKDIR /src
 
-# Copy only the app project file first (layer cache for restore)
-# Tests are NOT needed inside the Docker image
+# Copy project file for restore layer cache
 COPY DemoApp/DemoApp.csproj DemoApp/
 
+# Restore, build and publish in ONE RUN — keeps NuGet cache in same layer
 RUN dotnet restore DemoApp/DemoApp.csproj
 
-# Copy app source and build
 COPY DemoApp/ DemoApp/
 
-RUN dotnet build DemoApp/DemoApp.csproj -c Release --no-restore
-
-# Publish
-RUN dotnet publish DemoApp/DemoApp.csproj -c Release -o /app/out --no-build
+RUN dotnet publish DemoApp/DemoApp.csproj \
+      -c Release \
+      -o /app/out
 
 # ── Stage 2: Runtime ────────────────────────────────────────────
 FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS runtime
