@@ -11,7 +11,7 @@ DemoApp.sln
 │   │   └── ProductsController.cs   # CRUD endpoints for /api/products
 │   ├── Models/
 │   │   └── Product.cs
-│   ├── Program.cs
+│   ├── Program.csdfbfbd
 │   ├── appsettings.json
 │   └── DemoApp.csproj
 ├── DemoApp.Tests/                  # xUnit integration + unit tests
