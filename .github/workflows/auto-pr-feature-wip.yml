@@ -1,0 +1,136 @@
+name: Feature → WIP + Conditional PR
+
+on:
+  push:
+    branches:
+      - 'feature/*'
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  manage-wip:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+
+      # ✅ Extract app + sprint + team
+      - name: Extract branch info
+        id: vars
+        run: |
+          SOURCE_BRANCH="${GITHUB_REF#refs/heads/}"
+
+          echo "Processing: $SOURCE_BRANCH"
+
+          # Validate format: feature/<app>-xx-<number>-<team>
+          if [[ ! "$SOURCE_BRANCH" =~ ^feature\/([a-zA-Z0-9]+)-([a-zA-Z0-9]+)-([0-9]+)-(team[0-9a-zA-Z]+)$ ]]; then
+            echo "❌ Invalid branch format!"
+            exit 1
+          fi
+
+          APP=$(echo "$SOURCE_BRANCH" | cut -d'/' -f2 | cut -d'-' -f1)
+          SPRINT=$(echo "$SOURCE_BRANCH" | cut -d'-' -f3)
+          TEAM=$(echo "$SOURCE_BRANCH" | cut -d'-' -f4)
+
+          TARGET_BRANCH="wip/${APP}-${SPRINT}-${TEAM}"
+
+          echo "source=$SOURCE_BRANCH" >> $GITHUB_OUTPUT
+          echo "target=$TARGET_BRANCH" >> $GITHUB_OUTPUT
+          echo "app=$APP" >> $GITHUB_OUTPUT
+          echo "sprint=$SPRINT" >> $GITHUB_OUTPUT
+          echo "team=$TEAM" >> $GITHUB_OUTPUT
+
+          echo "✅ Target Branch: $TARGET_BRANCH"
+
+      # ✅ Check if WIP branch exists
+      - name: Check if WIP branch exists
+        id: check
+        run: |
+          git fetch origin
+
+          if git ls-remote --exit-code --heads origin ${{ steps.vars.outputs.target }}; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "✅ WIP branch exists"
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "🚀 WIP branch will be created"
+          fi
+
+      # ✅ Create WIP branch ONLY if missing
+      - name: Create WIP branch
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          TARGET=${{ steps.vars.outputs.target }}
+
+          echo "Creating $TARGET from main"
+
+          git checkout origin/main -b $TARGET
+          git push origin $TARGET
+
+      # ✅ Fetch target branch (ensure available)
+      - name: Fetch target branch
+        if: steps.check.outputs.exists == 'true'
+        run: |
+          git fetch origin ${{ steps.vars.outputs.target }}
+
+      # ✅ Conflict check ONLY if branch exists
+      - name: Check merge conflict
+        if: steps.check.outputs.exists == 'true'
+        run: |
+          SOURCE=${{ steps.vars.outputs.source }}
+          TARGET=${{ steps.vars.outputs.target }}
+
+          git checkout $SOURCE
+
+          git merge origin/$TARGET --no-commit --no-ff || echo "MERGE_FAILED=true" >> $GITHUB_ENV
+
+          if [ "$MERGE_FAILED" = "true" ]; then
+            echo "❌ Merge conflict detected with $TARGET"
+            exit 1
+          else
+            echo "✅ No conflicts"
+          fi
+
+          git merge --abort || true
+
+      # ✅ Create PR ONLY if branch already existed
+      - name: Create Pull Request
+        if: steps.check.outputs.exists == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+        run: |
+          SOURCE=${{ steps.vars.outputs.source }}
+          TARGET=${{ steps.vars.outputs.target }}
+
+          echo "Creating PR: $SOURCE → $TARGET"
+
+          EXISTING=$(gh pr list --base "$TARGET" --head "$SOURCE" --state open --json number --jq '.[0].number')
+
+          if [ -z "$EXISTING" ]; then
+            gh pr create \
+              --base "$TARGET" \
+              --head "$SOURCE" \
+              --title "Auto PR: $SOURCE → $TARGET" \
+              --body "🚀 Auto-created PR\n\nApp: ${{ steps.vars.outputs.app }}\nSprint: ${{ steps.vars.outputs.sprint }}\nTeam: ${{ steps.vars.outputs.team }}"
+          else
+            echo "✅ PR #$EXISTING already exists. Skipping."
+          fi
+
+      # ✅ Final summary
+      - name: Summary
+        run: |
+          if [ "${{ steps.check.outputs.exists }}" == "false" ]; then
+            echo "✔ WIP branch created. No PR needed."
+          else
+            echo "✔ WIP branch existed. PR handled."
+          fi
