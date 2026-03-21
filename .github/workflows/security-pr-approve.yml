@@ -78,36 +78,7 @@ jobs:
      
   
 
-      # ✅ Approve PR ONLY if above step succeeds
-      - name: Approve PR
-        if: success()
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          PR_NUMBER=${{ github.event.pull_request.number }}
 
-          echo "Approving PR #$PR_NUMBER"
-
-          gh pr review $PR_NUMBER --approve
-      
-      # ✅ Auto Merge PR
-      - name: Merge PR
-        if: success()
-        env:
-          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
-        run: |
-          PR_NUMBER=${{ github.event.pull_request.number }}
-
-          echo "Merging PR #$PR_NUMBER"
-
-          gh pr merge $PR_NUMBER \
-            --merge \
-#           --delete-branch    
-      # ❌ Optional: log failure
-      - name: If failed
-        if: failure()
-        run: |
-          echo "❌ Gitleaks failed. PR will NOT be approved."
     ###################################################################################################
 
 
@@ -146,6 +117,39 @@ jobs:
           severity:       HIGH,CRITICAL
           exit-code:      1
           ignore-unfixed: true   # skip CVEs with no fix available (e.g. OS-level libc)
+
+      # ✅ Approve PR ONLY if above step succeeds
+      - name: Approve PR
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUMBER=${{ github.event.pull_request.number }}
+
+          echo "Approving PR #$PR_NUMBER"
+
+          gh pr review $PR_NUMBER --approve
+      
+      # ✅ Auto Merge PR
+      - name: Merge PR
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+        run: |
+          PR_NUMBER=${{ github.event.pull_request.number }}
+
+          echo "Merging PR #$PR_NUMBER"
+
+          gh pr merge $PR_NUMBER \
+            --merge \
+#           --delete-branch    
+      # ❌ Optional: log failure
+      - name: If failed
+        if: failure()
+        run: |
+          echo "❌ Gitleaks failed. PR will NOT be approved."
+
+
 
       # ── 14. Summary ───────────────────────────────────────────
       - name: Pipeline Summary
