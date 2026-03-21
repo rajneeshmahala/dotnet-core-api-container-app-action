@@ -2,16 +2,16 @@
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 WORKDIR /src
 
-# Copy solution + project files first (layer cache for restore)
-COPY DemoApp.sln                        ./
-COPY DemoApp/DemoApp.csproj             DemoApp/
-COPY DemoApp.Tests/DemoApp.Tests.csproj DemoApp.Tests/
+# Copy only the app project file first (layer cache for restore)
+# Tests are NOT needed inside the Docker image
+COPY DemoApp/DemoApp.csproj DemoApp/
 
-RUN dotnet restore DemoApp.sln
+RUN dotnet restore DemoApp/DemoApp.csproj
 
-# Copy source and build
-COPY DemoApp/     DemoApp/
-RUN dotnet build  DemoApp/DemoApp.csproj -c Release --no-restore
+# Copy app source and build
+COPY DemoApp/ DemoApp/
+
+RUN dotnet build DemoApp/DemoApp.csproj -c Release --no-restore
 
 # Publish
 RUN dotnet publish DemoApp/DemoApp.csproj -c Release -o /app/out --no-build
@@ -26,7 +26,6 @@ USER appuser
 
 COPY --from=build /app/out .
 
-# Port the app listens on
 EXPOSE 8080
 ENV ASPNETCORE_URLS=http://+:8080
 ENV ASPNETCORE_ENVIRONMENT=Production
