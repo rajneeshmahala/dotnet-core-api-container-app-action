@@ -1,3 +1,21 @@
+# ============================================================
+#  Consolidate Team → Consolidate Final PR
+#  + Microsoft Teams Notifications (Incoming Webhook)
+#
+#  SETUP — Add this secret to your repository:
+#    Name : TEAMS_WEBHOOK_URL
+#    Value: your Teams Incoming Webhook URL
+#
+#  NOTIFICATIONS SENT:
+#    🚀 Pipeline Started
+#    ✅ ConsoliDate Branch Created
+#    ❌ Merge Conflict Detected
+#    🔀 PR Auto-Created
+#    🔄 PR Updated (existing PR)
+#    ✅ Pipeline Success Summary
+#    ❌ Pipeline Failed (catch-all)
+# ============================================================
+
 name: consolidate team > consolidate final PR
 
 on:
@@ -14,6 +32,8 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+
+      # ── 1. Checkout ─────────────────────────────────────────
       - name: Checkout repo
         uses: actions/checkout@v4
         with:
@@ -21,112 +41,324 @@ jobs:
 
       - name: Configure Git
         run: |
-          git config user.name "github-actions"
+          git config user.name  "github-actions"
           git config user.email "github-actions@github.com"
 
-      # ✅ Extract app + sprint + team
+      # ── 🔔 NOTIFY: Pipeline Started ─────────────────────────
+      - name: "Notify Teams — Pipeline Started"
+        run: |
+          curl -s -X POST "${{ secrets.TEAMS_WEBHOOK_URL }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "@type": "MessageCard",
+              "@context": "http://schema.org/extensions",
+              "themeColor": "0078D4",
+              "summary": "Consolidate Final PR Pipeline Started",
+              "sections": [{
+                "activityTitle": "🚀 Consolidate Final PR Pipeline Started",
+                "activitySubtitle": "consolidate/* → ConsoliDate/* PR automation",
+                "facts": [
+                  { "name": "Branch",      "value": "'"${{ github.ref_name }}"'" },
+                  { "name": "Triggered by","value": "'"${{ github.actor }}"'" },
+                  { "name": "Run",         "value": "#'"${{ github.run_number }}"'" },
+                  { "name": "Repository",  "value": "'"${{ github.repository }}"'" }
+                ]
+              }],
+              "potentialAction": [{
+                "@type": "OpenUri",
+                "name": "View Run",
+                "targets": [{ "os": "default", "uri": "'"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"'" }]
+              }]
+            }'
+
+      # ── 2. Extract Branch Info ───────────────────────────────
       - name: Extract branch info
         id: vars
         run: |
           SOURCE_BRANCH="${GITHUB_REF#refs/heads/}"
-
           echo "Processing: $SOURCE_BRANCH"
 
-          
-
-          APP=$(echo "$SOURCE_BRANCH" | cut -d'/' -f2 | cut -d'-' -f1)
+          APP=$(echo "$SOURCE_BRANCH"    | cut -d'/' -f2 | cut -d'-' -f1)
           SPRINT=$(echo "$SOURCE_BRANCH" | cut -d'-' -f3)
-          TEAM=$(echo "$SOURCE_BRANCH" | cut -d'-' -f4)
-
+          TEAM=$(echo "$SOURCE_BRANCH"   | cut -d'-' -f4)
           TARGET_BRANCH="ConsoliDate/${APP}-${SPRINT}"
 
-          echo "source=$SOURCE_BRANCH" >> $GITHUB_OUTPUT
-          echo "target=$TARGET_BRANCH" >> $GITHUB_OUTPUT
-          echo "app=$APP" >> $GITHUB_OUTPUT
-          echo "sprint=$SPRINT" >> $GITHUB_OUTPUT
-          echo "team=$TEAM" >> $GITHUB_OUTPUT
+          echo "source=$SOURCE_BRANCH"  >> $GITHUB_OUTPUT
+          echo "target=$TARGET_BRANCH"  >> $GITHUB_OUTPUT
+          echo "app=$APP"               >> $GITHUB_OUTPUT
+          echo "sprint=$SPRINT"         >> $GITHUB_OUTPUT
+          echo "team=$TEAM"             >> $GITHUB_OUTPUT
 
-          echo "✅ Target Branch: $TARGET_BRANCH"
+          echo "✅ APP=$APP | SPRINT=$SPRINT | TEAM=$TEAM | TARGET=$TARGET_BRANCH"
 
-      # ✅ Check if ConsoliDate branch exists
+      # ── 3. Check if ConsoliDate Branch Exists ───────────────
       - name: Check if ConsoliDate branch exists
         id: check
         run: |
           git fetch origin
-
-          if git ls-remote --exit-code --heads origin ${{ steps.vars.outputs.target }}; then
-            echo "exists=true" >> $GITHUB_OUTPUT
+          if git ls-remote --exit-code --heads origin "${{ steps.vars.outputs.target }}"; then
+            echo "exists=true"  >> $GITHUB_OUTPUT
             echo "✅ ConsoliDate branch exists"
           else
             echo "exists=false" >> $GITHUB_OUTPUT
             echo "🚀 ConsoliDate branch will be created"
           fi
 
-      # ✅ Create ConsoliDate branch ONLY if missing
+      # ── 4. Create ConsoliDate Branch (only if missing) ──────
       - name: Create ConsoliDate branch
         if: steps.check.outputs.exists == 'false'
         run: |
-          TARGET=${{ steps.vars.outputs.target }}
+          TARGET="${{ steps.vars.outputs.target }}"
+          git checkout origin/main -b "$TARGET"
+          git push origin "$TARGET"
+          echo "✅ Created: $TARGET"
 
-          echo "Creating $TARGET from main"
+      # ── 🔔 NOTIFY: ConsoliDate Branch Created ───────────────
+      - name: "Notify Teams — ConsoliDate Branch Created"
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          curl -s -X POST "${{ secrets.TEAMS_WEBHOOK_URL }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "@type": "MessageCard",
+              "@context": "http://schema.org/extensions",
+              "themeColor": "107C10",
+              "summary": "ConsoliDate Branch Created",
+              "sections": [{
+                "activityTitle": "✅ ConsoliDate Branch Created from main",
+                "facts": [
+                  { "name": "ConsoliDate Branch",  "value": "'"${{ steps.vars.outputs.target }}"'" },
+                  { "name": "Source Branch",       "value": "'"${{ steps.vars.outputs.source }}"'" },
+                  { "name": "App",                 "value": "'"${{ steps.vars.outputs.app }}"'" },
+                  { "name": "Sprint",              "value": "'"${{ steps.vars.outputs.sprint }}"'" },
+                  { "name": "Team",                "value": "'"${{ steps.vars.outputs.team }}"'" },
+                  { "name": "Note",                "value": "Push again to this branch to trigger a PR" }
+                ]
+              }],
+              "potentialAction": [{
+                "@type": "OpenUri",
+                "name": "View Run",
+                "targets": [{ "os": "default", "uri": "'"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"'" }]
+              }]
+            }'
 
-          git checkout origin/main -b $TARGET
-          git push origin $TARGET
-
-      # ✅ Fetch target branch (ensure available)
+      # ── 5. Fetch Target Branch ───────────────────────────────
       - name: Fetch target branch
-    #    if: steps.check.outputs.exists == 'true'
-        run: |
-          git fetch origin ${{ steps.vars.outputs.target }}
+        run: git fetch origin "${{ steps.vars.outputs.target }}"
 
-      # ✅ Conflict check ONLY if branch exists
+      # ── 6. Merge Conflict Check ──────────────────────────────
       - name: Check merge conflict
-    #    if: steps.check.outputs.exists == 'true'
         run: |
-          SOURCE=${{ steps.vars.outputs.source }}
-          TARGET=${{ steps.vars.outputs.target }}
+          SOURCE="${{ steps.vars.outputs.source }}"
+          TARGET="${{ steps.vars.outputs.target }}"
 
-          git checkout $SOURCE
-
-          git merge origin/$TARGET --no-commit --no-ff || echo "MERGE_FAILED=true" >> $GITHUB_ENV
-
-          if [ "$MERGE_FAILED" = "true" ]; then
-            echo "❌ Merge conflict detected with $TARGET"
-            exit 1
-          else
-            echo "✅ No conflicts"
-          fi
+          git checkout "$SOURCE"
+          git merge "origin/$TARGET" --no-commit --no-ff \
+            || echo "MERGE_FAILED=true" >> $GITHUB_ENV
 
           git merge --abort || true
 
-      # ✅ Create PR ONLY if branch already existed
+          if [ "$MERGE_FAILED" = "true" ]; then
+
+            curl -s -X POST "${{ secrets.TEAMS_WEBHOOK_URL }}" \
+              -H "Content-Type: application/json" \
+              -d '{
+                "@type": "MessageCard",
+                "@context": "http://schema.org/extensions",
+                "themeColor": "D13438",
+                "summary": "Merge Conflict Detected",
+                "sections": [{
+                  "activityTitle": "❌ Merge Conflict Detected — PR Blocked",
+                  "activitySubtitle": "Manual resolution required before PR can be created",
+                  "facts": [
+                    { "name": "Source Branch",      "value": "'"$SOURCE"'" },
+                    { "name": "ConsoliDate Branch", "value": "'"$TARGET"'" },
+                    { "name": "App",                "value": "'"${{ steps.vars.outputs.app }}"'" },
+                    { "name": "Sprint",             "value": "'"${{ steps.vars.outputs.sprint }}"'" },
+                    { "name": "Team",               "value": "'"${{ steps.vars.outputs.team }}"'" },
+                    { "name": "Fix",                "value": "git fetch origin && git merge origin/'"$TARGET"' — resolve conflicts — git push" }
+                  ]
+                }],
+                "potentialAction": [{
+                  "@type": "OpenUri",
+                  "name": "View Run",
+                  "targets": [{ "os": "default", "uri": "'"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"'" }]
+                }]
+              }'
+
+            echo "❌ Merge conflict detected with $TARGET"
+            exit 1
+          fi
+          echo "✅ No conflicts"
+
+      # ── 7. Create Pull Request ───────────────────────────────
       - name: Create Pull Request
-   #     if: steps.check.outputs.exists == 'true'
+        id: pr
         env:
           GH_TOKEN: ${{ secrets.PAT_TOKEN }}
         run: |
-          SOURCE=${{ steps.vars.outputs.source }}
-          TARGET=${{ steps.vars.outputs.target }}
+          SOURCE="${{ steps.vars.outputs.source }}"
+          TARGET="${{ steps.vars.outputs.target }}"
 
-          echo "Creating PR: $SOURCE → $TARGET"
+          EXISTING=$(gh pr list \
+            --base "$TARGET" --head "$SOURCE" \
+            --state open --json number,url --jq '.[0]')
 
-          EXISTING=$(gh pr list --base "$TARGET" --head "$SOURCE" --state open --json number --jq '.[0].number')
+          EXISTING_NUM=$(echo "$EXISTING" | jq -r '.number // empty')
+          EXISTING_URL=$(echo "$EXISTING" | jq -r '.url // empty')
 
-          if [ -z "$EXISTING" ]; then
+          if [ -z "$EXISTING_NUM" ]; then
             gh pr create \
-              --base "$TARGET" \
-              --head "$SOURCE" \
+              --base  "$TARGET" \
+              --head  "$SOURCE" \
               --title "Auto PR: $SOURCE → $TARGET" \
-              --body "🚀 Auto-created PR\n\nApp: ${{ steps.vars.outputs.app }}\nSprint: ${{ steps.vars.outputs.sprint }}\nTeam: ${{ steps.vars.outputs.team }}"
+              --body  "$(printf '🚀 Auto-created PR\n\n**App:** ${{ steps.vars.outputs.app }}\n**Sprint:** ${{ steps.vars.outputs.sprint }}\n**Team:** ${{ steps.vars.outputs.team }}')"
+
+            PR_URL=$(gh pr list \
+              --base "$TARGET" --head "$SOURCE" \
+              --state open --json url --jq '.[0].url')
+
+            echo "pr_status=created" >> $GITHUB_OUTPUT
+            echo "pr_url=${PR_URL}"  >> $GITHUB_OUTPUT
+            echo "✅ PR created: $PR_URL"
           else
-            echo "✅ PR #$EXISTING already exists. Skipping."
+            echo "pr_status=existing"     >> $GITHUB_OUTPUT
+            echo "pr_url=${EXISTING_URL}" >> $GITHUB_OUTPUT
+            echo "✅ PR #$EXISTING_NUM already exists. Skipping."
           fi
 
-      # ✅ Final summary
-      - name: Summary
+      # ── 🔔 NOTIFY: PR Auto-Created ───────────────────────────
+      - name: "Notify Teams — PR Auto-Created"
+        if: success() && steps.pr.outputs.pr_status == 'created'
+        run: |
+          curl -s -X POST "${{ secrets.TEAMS_WEBHOOK_URL }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "@type": "MessageCard",
+              "@context": "http://schema.org/extensions",
+              "themeColor": "107C10",
+              "summary": "Consolidate PR Auto-Created",
+              "sections": [{
+                "activityTitle": "🔀 Consolidate PR Auto-Created",
+                "activitySubtitle": "'"${{ steps.vars.outputs.source }}"' → '"${{ steps.vars.outputs.target }}"'",
+                "facts": [
+                  { "name": "PR URL",        "value": "'"${{ steps.pr.outputs.pr_url }}"'" },
+                  { "name": "App",           "value": "'"${{ steps.vars.outputs.app }}"'" },
+                  { "name": "Sprint",        "value": "'"${{ steps.vars.outputs.sprint }}"'" },
+                  { "name": "Team",          "value": "'"${{ steps.vars.outputs.team }}"'" },
+                  { "name": "Created by",    "value": "'"${{ github.actor }}"'" },
+                  { "name": "Action needed", "value": "Review and approve the PR" }
+                ]
+              }],
+              "potentialAction": [{
+                "@type": "OpenUri",
+                "name": "Review PR",
+                "targets": [{ "os": "default", "uri": "'"${{ steps.pr.outputs.pr_url }}"'" }]
+              }]
+            }'
+
+      # ── 🔔 NOTIFY: PR Already Exists (Updated) ───────────────
+      - name: "Notify Teams — PR Updated"
+        if: success() && steps.pr.outputs.pr_status == 'existing'
+        run: |
+          curl -s -X POST "${{ secrets.TEAMS_WEBHOOK_URL }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "@type": "MessageCard",
+              "@context": "http://schema.org/extensions",
+              "themeColor": "0078D4",
+              "summary": "Consolidate PR Updated by New Push",
+              "sections": [{
+                "activityTitle": "🔄 Existing Consolidate PR Updated by New Push",
+                "activitySubtitle": "'"${{ steps.vars.outputs.source }}"' → '"${{ steps.vars.outputs.target }}"'",
+                "facts": [
+                  { "name": "PR URL",   "value": "'"${{ steps.pr.outputs.pr_url }}"'" },
+                  { "name": "App",      "value": "'"${{ steps.vars.outputs.app }}"'" },
+                  { "name": "Sprint",   "value": "'"${{ steps.vars.outputs.sprint }}"'" },
+                  { "name": "Team",     "value": "'"${{ steps.vars.outputs.team }}"'" },
+                  { "name": "Pushed by","value": "'"${{ github.actor }}"'" }
+                ]
+              }],
+              "potentialAction": [{
+                "@type": "OpenUri",
+                "name": "View PR",
+                "targets": [{ "os": "default", "uri": "'"${{ steps.pr.outputs.pr_url }}"'" }]
+              }]
+            }'
+
+      # ── 🔔 NOTIFY: Pipeline Success ──────────────────────────
+      - name: "Notify Teams — Pipeline Success"
+        if: success()
         run: |
           if [ "${{ steps.check.outputs.exists }}" == "false" ]; then
-            echo "✔ ConsoliDate branch created. No PR needed."
+            RESULT="New ConsoliDate branch created from main. Push again to trigger PR."
           else
-            echo "✔ ConsoliDate branch existed. PR handled."
+            RESULT="Conflict check passed. PR created or already open."
           fi
+
+          curl -s -X POST "${{ secrets.TEAMS_WEBHOOK_URL }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "@type": "MessageCard",
+              "@context": "http://schema.org/extensions",
+              "themeColor": "107C10",
+              "summary": "Consolidate Final PR Pipeline Passed",
+              "sections": [{
+                "activityTitle": "✅ Consolidate Final PR Pipeline Completed",
+                "facts": [
+                  { "name": "Source Branch",      "value": "'"${{ steps.vars.outputs.source }}"'" },
+                  { "name": "ConsoliDate Branch", "value": "'"${{ steps.vars.outputs.target }}"'" },
+                  { "name": "App",                "value": "'"${{ steps.vars.outputs.app }}"'" },
+                  { "name": "Sprint",             "value": "'"${{ steps.vars.outputs.sprint }}"'" },
+                  { "name": "Team",               "value": "'"${{ steps.vars.outputs.team }}"'" },
+                  { "name": "Run",                "value": "#'"${{ github.run_number }}"'" },
+                  { "name": "Result",             "value": "'"$RESULT"'" }
+                ]
+              }],
+              "potentialAction": [{
+                "@type": "OpenUri",
+                "name": "View Run",
+                "targets": [{ "os": "default", "uri": "'"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"'" }]
+              }]
+            }'
+
+      # ── 🔔 NOTIFY: Pipeline Failed (catch-all) ───────────────
+      - name: "Notify Teams — Pipeline Failed"
+        if: failure()
+        run: |
+          curl -s -X POST "${{ secrets.TEAMS_WEBHOOK_URL }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "@type": "MessageCard",
+              "@context": "http://schema.org/extensions",
+              "themeColor": "D13438",
+              "summary": "Consolidate Final PR Pipeline Failed",
+              "sections": [{
+                "activityTitle": "❌ Consolidate Final PR Pipeline Failed",
+                "facts": [
+                  { "name": "Branch",      "value": "'"${{ github.ref_name }}"'" },
+                  { "name": "Triggered by","value": "'"${{ github.actor }}"'" },
+                  { "name": "Run",         "value": "#'"${{ github.run_number }}"'" }
+                ]
+              }],
+              "potentialAction": [{
+                "@type": "OpenUri",
+                "name": "View Failed Run",
+                "targets": [{ "os": "default", "uri": "'"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"'" }]
+              }]
+            }'
+
+      # ── 8. Summary ───────────────────────────────────────────
+      - name: Summary
+        if: always()
+        run: |
+          echo "================================================"
+          if [ "${{ steps.check.outputs.exists }}" == "false" ]; then
+            echo "  ✔ ConsoliDate branch created. No PR needed."
+          else
+            echo "  ✔ ConsoliDate branch existed. PR handled."
+          fi
+          echo "  Source : ${{ steps.vars.outputs.source }}"
+          echo "  Target : ${{ steps.vars.outputs.target }}"
+          echo "  Run    : #${{ github.run_number }}"
+          echo "================================================"
