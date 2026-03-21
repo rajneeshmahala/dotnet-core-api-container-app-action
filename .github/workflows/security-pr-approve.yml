@@ -1,3 +1,23 @@
+# ============================================================
+#  PR Security Check + Approve + Auto Merge
+#  + Microsoft Teams Notifications (Incoming Webhook)
+#
+#  SETUP — Add this secret to your repository:
+#    Name : TEAMS_WEBHOOK_URL
+#    Value: your Teams Incoming Webhook URL
+#
+#  NOTIFICATIONS SENT:
+#    🚀 PR Check Started
+#    ❌ Credential Scan Failed (Gitleaks)
+#    ❌ Trivy FS Scan Failed
+#    ❌ Build Failed
+#    ❌ Unit Tests Failed
+#    ❌ Docker Image Scan Failed
+#    ✅ PR Approved & Merged
+#    ❌ Pipeline Failed (any step)
+#    📋 Summary (always)
+# ============================================================
+
 name: PR Security Check + Approve
 
 on:
@@ -10,150 +30,342 @@ permissions:
 
 jobs:
   security-scan:
- #   if: startsWith(github.head_ref, 'feature/') && startsWith(github.base_ref, 'wip/')
     runs-on: ubuntu-latest
 
     steps:
+
+      # ── 1. Checkout ─────────────────────────────────────────
       - name: Checkout PR code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
- # ── 2. Credential Scan (Gitleaks) ───────────────────────
 
+      # ── 🔔 NOTIFY: PR Check Started ─────────────────────────
+      - name: "Notify Teams — PR Check Started"
+        run: |
+          curl -s -X POST "${{ secrets.TEAMS_WEBHOOK_URL }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "@type": "MessageCard",
+              "@context": "http://schema.org/extensions",
+              "themeColor": "0078D4",
+              "summary": "PR Security Check Started",
+              "sections": [{
+                "activityTitle": "🚀 PR Security Check Started",
+                "activitySubtitle": "Running security scans, build, tests and Docker checks",
+                "facts": [
+                  { "name": "PR",          "value": "#'"${{ github.event.pull_request.number }}"' — '"${{ github.event.pull_request.title }}"'" },
+                  { "name": "From Branch", "value": "'"${{ github.head_ref }}"'" },
+                  { "name": "Into Branch", "value": "'"${{ github.base_ref }}"'" },
+                  { "name": "Author",      "value": "'"${{ github.actor }}"'" },
+                  { "name": "Run",         "value": "#'"${{ github.run_number }}"'" }
+                ]
+              }],
+              "potentialAction": [{
+                "@type": "OpenUri",
+                "name": "View PR",
+                "targets": [{ "os": "default", "uri": "'"${{ github.event.pull_request.html_url }}"'" }]
+              }]
+            }'
+
+      # ── 2. Credential Scan (Gitleaks) ───────────────────────
       - name: Run Gitleaks
+        id: gitleaks
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
- 
-      #  Trivy FS Scan
+
+      - name: "Notify Teams — Gitleaks Failed"
+        if: failure() && steps.gitleaks.outcome == 'failure'
+        run: |
+          curl -s -X POST "${{ secrets.TEAMS_WEBHOOK_URL }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "@type": "MessageCard",
+              "@context": "http://schema.org/extensions",
+              "themeColor": "D13438",
+              "summary": "Credential Scan Failed",
+              "sections": [{
+                "activityTitle": "❌ Credential Scan Failed — PR Blocked",
+                "activitySubtitle": "Gitleaks detected potential secrets or credentials in the code",
+                "facts": [
+                  { "name": "PR",          "value": "#'"${{ github.event.pull_request.number }}"'" },
+                  { "name": "From Branch", "value": "'"${{ github.head_ref }}"'" },
+                  { "name": "Author",      "value": "'"${{ github.actor }}"'" },
+                  { "name": "Action",      "value": "Remove exposed secrets, rotate credentials, then repush" }
+                ]
+              }],
+              "potentialAction": [{
+                "@type": "OpenUri",
+                "name": "View Failed Run",
+                "targets": [{ "os": "default", "uri": "'"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"'" }]
+              }]
+            }'
+
+      # ── 3. Trivy FS Scan ────────────────────────────────────
       - name: Run Trivy FS Scan
+        id: trivy_fs
         uses: aquasecurity/trivy-action@v0.20.0
         with:
           scan-type: fs
-          scan-ref: .
+          scan-ref:  .
           exit-code: 1
-          severity: CRITICAL,HIGH
-      # ── Setup .NET ────────────────────────────────────────
+          severity:  CRITICAL,HIGH
+
+      - name: "Notify Teams — Trivy FS Scan Failed"
+        if: failure() && steps.trivy_fs.outcome == 'failure'
+        run: |
+          curl -s -X POST "${{ secrets.TEAMS_WEBHOOK_URL }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "@type": "MessageCard",
+              "@context": "http://schema.org/extensions",
+              "themeColor": "D13438",
+              "summary": "Filesystem Vulnerability Scan Failed",
+              "sections": [{
+                "activityTitle": "❌ Filesystem Vulnerability Scan Failed — PR Blocked",
+                "activitySubtitle": "Trivy found CRITICAL or HIGH vulnerabilities in the source code",
+                "facts": [
+                  { "name": "PR",          "value": "#'"${{ github.event.pull_request.number }}"'" },
+                  { "name": "From Branch", "value": "'"${{ github.head_ref }}"'" },
+                  { "name": "Severity",    "value": "CRITICAL, HIGH" },
+                  { "name": "Action",      "value": "Review Trivy report and update vulnerable dependencies" }
+                ]
+              }],
+              "potentialAction": [{
+                "@type": "OpenUri",
+                "name": "View Failed Run",
+                "targets": [{ "os": "default", "uri": "'"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"'" }]
+              }]
+            }'
+
+      # ── 4. Setup .NET + Restore ─────────────────────────────
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
+
       - name: Restore
         run: dotnet restore DemoApp.sln
 
-      # ── 6. Build  ────────────────────────────────────────────
-      #    Must come BEFORE lint and test so binaries exist
+      # ── 5. Build ─────────────────────────────────────────────
       - name: Build
+        id: build
         run: dotnet build DemoApp.sln --no-restore
 
-      # ── 7. Lint (format check) ───────────────────────────────
-      #    Runs after build so all generated files are present
+      - name: "Notify Teams — Build Failed"
+        if: failure() && steps.build.outcome == 'failure'
+        run: |
+          curl -s -X POST "${{ secrets.TEAMS_WEBHOOK_URL }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "@type": "MessageCard",
+              "@context": "http://schema.org/extensions",
+              "themeColor": "D13438",
+              "summary": "Build Failed",
+              "sections": [{
+                "activityTitle": "❌ Build Failed — PR Blocked",
+                "activitySubtitle": "dotnet build DemoApp.sln returned errors",
+                "facts": [
+                  { "name": "PR",          "value": "#'"${{ github.event.pull_request.number }}"'" },
+                  { "name": "From Branch", "value": "'"${{ github.head_ref }}"'" },
+                  { "name": "Author",      "value": "'"${{ github.actor }}"'" },
+                  { "name": "Action",      "value": "Fix build errors and repush" }
+                ]
+              }],
+              "potentialAction": [{
+                "@type": "OpenUri",
+                "name": "View Failed Run",
+                "targets": [{ "os": "default", "uri": "'"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"'" }]
+              }]
+            }'
+
+      # ── 6. Lint ──────────────────────────────────────────────
       - name: Lint (format check)
         run: dotnet format DemoApp.sln --verify-no-changes || echo "⚠️ Lint issues found"
 
-      # ── 8. Unit Tests ─────────────────────────────────────────
-      #    --no-build is safe here because step 6 already built
+      # ── 7. Unit Tests ────────────────────────────────────────
       - name: Unit Tests
+        id: tests
         run: dotnet test DemoApp.sln --verbosity normal
 
- #       # 🔐 Credential Scanning (FIXED)
- #     - name: Credential Scan (Gitleaks)
- #       uses: gitleaks/gitleaks-action@v2
- #       with:
- #         args: detect --no-git --source=. --redact
-
- #     - uses: SonarSource/sonarqube-scan-action@v6
- #       env:
- #         SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
- #         SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
-
-      # 🔥 Quality Gate Check (IMPORTANT)
- #     - name: SonarQube Quality Gate
- #       uses: sonarsource/sonarqube-quality-gate-action@v1
- #       with:
- #         pollingTimeoutSec: 300
- #       env:
- #         SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          
-     
-  
-
-      # ✅ Approve PR ONLY if above step succeeds
-      - name: Approve PR
-        if: success()
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: "Notify Teams — Unit Tests Failed"
+        if: failure() && steps.tests.outcome == 'failure'
         run: |
-          PR_NUMBER=${{ github.event.pull_request.number }}
+          curl -s -X POST "${{ secrets.TEAMS_WEBHOOK_URL }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "@type": "MessageCard",
+              "@context": "http://schema.org/extensions",
+              "themeColor": "D13438",
+              "summary": "Unit Tests Failed",
+              "sections": [{
+                "activityTitle": "❌ Unit Tests Failed — PR Blocked",
+                "activitySubtitle": "One or more unit tests failed in DemoApp.sln",
+                "facts": [
+                  { "name": "PR",          "value": "#'"${{ github.event.pull_request.number }}"'" },
+                  { "name": "From Branch", "value": "'"${{ github.head_ref }}"'" },
+                  { "name": "Author",      "value": "'"${{ github.actor }}"'" },
+                  { "name": "Action",      "value": "Fix failing tests and repush" }
+                ]
+              }],
+              "potentialAction": [{
+                "@type": "OpenUri",
+                "name": "View Failed Run",
+                "targets": [{ "os": "default", "uri": "'"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"'" }]
+              }]
+            }'
 
-          echo "Approving PR #$PR_NUMBER"
-
-          gh pr review $PR_NUMBER --approve
-      
-      # ✅ Auto Merge PR
-      - name: Merge PR
-        if: success()
-        env:
-          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
-        run: |
-          PR_NUMBER=${{ github.event.pull_request.number }}
-
-          echo "Merging PR #$PR_NUMBER"
-
-          gh pr merge $PR_NUMBER \
-            --merge \
-#           --delete-branch    
-      # ❌ Optional: log failure
-      - name: If failed
-        if: failure()
-        run: |
-          echo "❌ Gitleaks failed. PR will NOT be approved."
-    ###################################################################################################
-
-
-
-
-
-      # ── 5. Restore ───────────────────────────────────────────
-
-      # ── 9. Integration Tests (stub) ──────────────────────────
+      # ── 8. Integration Tests (stub) ─────────────────────────
       - name: Integration Tests
         run: echo "ℹ️ Skipping integration tests — replace with real tests later"
 
-      # ── 10. Publish ───────────────────────────────────────────
+      # ── 9. Publish ───────────────────────────────────────────
       - name: Publish
         run: dotnet publish DemoApp/DemoApp.csproj -c Release -o out
 
-      # ── 11. Static Code Analysis (SonarQube — optional) ──────
-      # Uncomment when SONAR_TOKEN and SONAR_HOST_URL are set
+      # ── 10. SonarQube (optional — uncomment when ready) ──────
       # - name: Sonar Scan
       #   uses: SonarSource/sonarqube-scan-action@v6
       #   env:
       #     SONAR_TOKEN:    ${{ secrets.SONAR_TOKEN }}
       #     SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+      # - name: SonarQube Quality Gate
+      #   uses: sonarsource/sonarqube-quality-gate-action@v1
+      #   with:
+      #     pollingTimeoutSec: 300
+      #   env:
+      #     SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
-      # ── 12. Docker Build ──────────────────────────────────────
+      # ── 11. Docker Build ─────────────────────────────────────
       - name: Build Docker
         run: |
           docker build -t demo-dotnet:${{ github.run_number }} .
           docker tag demo-dotnet:${{ github.run_number }} demo-dotnet:latest
 
-      # ── 13. Docker Image Scan ─────────────────────────────────
+      # ── 12. Trivy Image Scan ─────────────────────────────────
       - name: Trivy Image Scan
+        id: trivy_image
         uses: aquasecurity/trivy-action@v0.20.0
         with:
           image-ref:      demo-dotnet:${{ github.run_number }}
           severity:       HIGH,CRITICAL
           exit-code:      1
-          ignore-unfixed: true   # skip CVEs with no fix available (e.g. OS-level libc)
+          ignore-unfixed: true
 
-      # ── 14. Summary ───────────────────────────────────────────
+      - name: "Notify Teams — Docker Image Scan Failed"
+        if: failure() && steps.trivy_image.outcome == 'failure'
+        run: |
+          curl -s -X POST "${{ secrets.TEAMS_WEBHOOK_URL }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "@type": "MessageCard",
+              "@context": "http://schema.org/extensions",
+              "themeColor": "D13438",
+              "summary": "Docker Image Scan Failed",
+              "sections": [{
+                "activityTitle": "❌ Docker Image Scan Failed — PR Blocked",
+                "activitySubtitle": "Trivy found fixable HIGH or CRITICAL CVEs in the Docker image",
+                "facts": [
+                  { "name": "PR",          "value": "#'"${{ github.event.pull_request.number }}"'" },
+                  { "name": "Image",       "value": "demo-dotnet:'"${{ github.run_number }}"'" },
+                  { "name": "From Branch", "value": "'"${{ github.head_ref }}"'" },
+                  { "name": "Severity",    "value": "HIGH, CRITICAL (fixable only)" },
+                  { "name": "Action",      "value": "Update base image or vulnerable packages and repush" }
+                ]
+              }],
+              "potentialAction": [{
+                "@type": "OpenUri",
+                "name": "View Failed Run",
+                "targets": [{ "os": "default", "uri": "'"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"'" }]
+              }]
+            }'
+
+      # ── 13. Approve PR ───────────────────────────────────────
+      - name: Approve PR
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr review ${{ github.event.pull_request.number }} --approve
+          echo "✅ PR #${{ github.event.pull_request.number }} approved"
+
+      # ── 14. Auto Merge PR ────────────────────────────────────
+      - name: Merge PR
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+        run: |
+          gh pr merge ${{ github.event.pull_request.number }} --merge
+          echo "✅ PR #${{ github.event.pull_request.number }} merged"
+
+      # ── 🔔 NOTIFY: PR Approved & Merged ─────────────────────
+      - name: "Notify Teams — PR Approved and Merged"
+        if: success()
+        run: |
+          curl -s -X POST "${{ secrets.TEAMS_WEBHOOK_URL }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "@type": "MessageCard",
+              "@context": "http://schema.org/extensions",
+              "themeColor": "107C10",
+              "summary": "PR Approved and Merged",
+              "sections": [{
+                "activityTitle": "✅ PR Approved and Merged",
+                "activitySubtitle": "All security checks passed — PR auto-merged",
+                "facts": [
+                  { "name": "PR",          "value": "#'"${{ github.event.pull_request.number }}"' — '"${{ github.event.pull_request.title }}"'" },
+                  { "name": "From Branch", "value": "'"${{ github.head_ref }}"'" },
+                  { "name": "Into Branch", "value": "'"${{ github.base_ref }}"'" },
+                  { "name": "Author",      "value": "'"${{ github.actor }}"'" },
+                  { "name": "Run",         "value": "#'"${{ github.run_number }}"'" },
+                  { "name": "Checks",      "value": "Gitleaks ✅  Trivy FS ✅  Build ✅  Tests ✅  Image Scan ✅" }
+                ]
+              }],
+              "potentialAction": [{
+                "@type": "OpenUri",
+                "name": "View Run",
+                "targets": [{ "os": "default", "uri": "'"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"'" }]
+              }]
+            }'
+
+      # ── 🔔 NOTIFY: Pipeline Failed ───────────────────────────
+      - name: "Notify Teams — Pipeline Failed"
+        if: failure()
+        run: |
+          curl -s -X POST "${{ secrets.TEAMS_WEBHOOK_URL }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "@type": "MessageCard",
+              "@context": "http://schema.org/extensions",
+              "themeColor": "D13438",
+              "summary": "PR Security Check Failed",
+              "sections": [{
+                "activityTitle": "❌ PR Security Check Failed — PR NOT Merged",
+                "activitySubtitle": "One or more checks failed. Review the run for details.",
+                "facts": [
+                  { "name": "PR",          "value": "#'"${{ github.event.pull_request.number }}"' — '"${{ github.event.pull_request.title }}"'" },
+                  { "name": "From Branch", "value": "'"${{ github.head_ref }}"'" },
+                  { "name": "Into Branch", "value": "'"${{ github.base_ref }}"'" },
+                  { "name": "Author",      "value": "'"${{ github.actor }}"'" },
+                  { "name": "Run",         "value": "#'"${{ github.run_number }}"'" }
+                ]
+              }],
+              "potentialAction": [{
+                "@type": "OpenUri",
+                "name": "View Failed Run",
+                "targets": [{ "os": "default", "uri": "'"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"'" }]
+              }]
+            }'
+
+      # ── 15. Summary (always) ─────────────────────────────────
       - name: Pipeline Summary
         if: always()
         run: |
           echo "================================================"
-          echo "  Full CI Pipeline Complete"
+          echo "  PR Security Check + Approve"
+          echo "  PR     : #${{ github.event.pull_request.number }}"
           echo "  Run    : #${{ github.run_number }}"
-          echo "  Branch : ${{ github.ref_name }}"
+          echo "  Branch : ${{ github.head_ref }} → ${{ github.base_ref }}"
           echo "  Commit : ${{ github.sha }}"
           echo "================================================"
