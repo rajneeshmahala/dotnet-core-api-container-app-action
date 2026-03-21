@@ -1,13 +1,14 @@
-name: Build + Docker CI
+name: Full CI Pipeline (.NET + Security)
 
 on:
   push:
     branches:
       - main
       - 'wip/*'
+  pull_request:
 
 jobs:
-  build:
+  ci:
     runs-on: ubuntu-latest
 
     steps:
@@ -15,44 +16,68 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # 🔐 Credential Scanning (Gitleaks)
+      - name: Credential Scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # 🛡 Vulnerability Scan (Filesystem)
+      - name: Trivy FS Scan
+        uses: aquasecurity/trivy-action@v0.20.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: HIGH,CRITICAL
+          exit-code: 1
+
       # 🟣 Setup .NET
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
 
-      # 📦 Restore — target solution explicitly (multiple projects in repo)
-      - name: Restore dependencies
+      # 📦 Restore
+      - name: Restore
         run: dotnet restore DemoApp.sln
 
+      # 🧹 Linting (basic)
+      - name: Lint (format check)
+        run: dotnet format --verify-no-changes || echo "Lint issues"
+
+      # 🧪 Unit Tests
+      - name: Unit Tests
+        run: dotnet test DemoApp.sln --no-build
+
+      # 🔗 Integration Test (Optional)
+      - name: Integration Tests
+        run: echo "Skipping for now"  # replace later
+
       # 🏗 Build
-      - name: Build project
+      - name: Build
         run: dotnet build DemoApp.sln --no-restore
 
-      # 🧪 Test
-      - name: Run tests
-        run: dotnet test DemoApp.sln --no-build || echo "No tests"
-
-      # 📦 Publish — target main app project only (not test project)
-      - name: Publish app
+      # 📦 Publish
+      - name: Publish
         run: dotnet publish DemoApp/DemoApp.csproj -c Release -o out
 
-      # 🔢 Set image variables
-      - name: Set variables
-        run: |
-          echo "IMAGE_NAME=demo-dotnet"                 >> $GITHUB_ENV
-          echo "IMAGE_TAG=${{ github.run_number }}"     >> $GITHUB_ENV
+      # 📊 Static Code Analysis (Sonar - optional)
+      # Uncomment when ready
+      # - name: Sonar Scan
+      #   uses: SonarSource/sonarqube-scan-action@v6
+      #   env:
+      #     SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      #     SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
 
-      # 🐳 Build Docker image
-      - name: Build Docker image
+      # 🐳 Docker Build
+      - name: Build Docker
         run: |
-          docker build -t $IMAGE_NAME:$IMAGE_TAG .
-          docker tag  $IMAGE_NAME:$IMAGE_TAG $IMAGE_NAME:latest
+          docker build -t demo-dotnet:${{ github.run_number }} .
 
-      # 🔐 Security scan
-      - name: Trivy scan
+      # 🔐 Image Scan
+      - name: Trivy Image Scan
         uses: aquasecurity/trivy-action@v0.20.0
         with:
           image-ref: demo-dotnet:${{ github.run_number }}
-          severity:  LOW
-          exit-code: 0
+          severity: HIGH
+          exit-code: 1
