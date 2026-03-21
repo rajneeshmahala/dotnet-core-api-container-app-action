@@ -21,38 +21,38 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
-      # 📦 Restore
+      # 📦 Restore — target solution explicitly (multiple projects in repo)
       - name: Restore dependencies
-        run: dotnet restore
+        run: dotnet restore DemoApp.sln
 
       # 🏗 Build
       - name: Build project
-        run: dotnet build --no-restore
+        run: dotnet build DemoApp.sln --no-restore
 
-      # 🧪 Test (optional)
+      # 🧪 Test
       - name: Run tests
-        run: dotnet test --no-build || echo "No tests"
+        run: dotnet test DemoApp.sln --no-build || echo "No tests"
 
-      # 📦 Publish
+      # 📦 Publish — target main app project only (not test project)
       - name: Publish app
-        run: dotnet publish -c Release -o out
+        run: dotnet publish DemoApp/DemoApp.csproj -c Release -o out
 
       # 🔢 Set image variables
       - name: Set variables
         run: |
-          echo "IMAGE_NAME=demo-dotnet" >> $GITHUB_ENV
-          echo "IMAGE_TAG=${{ github.run_number }}" >> $GITHUB_ENV
+          echo "IMAGE_NAME=demo-dotnet"                 >> $GITHUB_ENV
+          echo "IMAGE_TAG=${{ github.run_number }}"     >> $GITHUB_ENV
 
       # 🐳 Build Docker image
       - name: Build Docker image
         run: |
           docker build -t $IMAGE_NAME:$IMAGE_TAG .
-          docker tag $IMAGE_NAME:$IMAGE_TAG $IMAGE_NAME:latest
+          docker tag  $IMAGE_NAME:$IMAGE_TAG $IMAGE_NAME:latest
 
-      # 🔐 (Optional) Security scan
+      # 🔐 Security scan
       - name: Trivy scan
         uses: aquasecurity/trivy-action@v0.20.0
         with:
           image-ref: demo-dotnet:${{ github.run_number }}
-          severity: LOW
+          severity:  LOW
           exit-code: 0
