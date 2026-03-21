@@ -7,7 +7,7 @@ COPY DemoApp.sln                        ./
 COPY DemoApp/DemoApp.csproj             DemoApp/
 COPY DemoApp.Tests/DemoApp.Tests.csproj DemoApp.Tests/
 
-RUN dotnet restore
+RUN dotnet restore DemoApp.sln
 
 # Copy source and build
 COPY DemoApp/     DemoApp/
