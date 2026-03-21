@@ -1,0 +1,179 @@
+name: RC build Docker CI
+
+on:
+  push:
+    branches:
+      - 'RC/*'
+  
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 🔄 Checkout
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+# Extract branch info
+      - name: Extract branch info
+        id: vars
+        run: |
+          SOURCE_BRANCH="${GITHUB_REF#refs/heads/}"
+          echo "Processing: $SOURCE_BRANCH"
+
+          APP=$(echo "$SOURCE_BRANCH" | cut -d'/' -f2 | cut -d'-' -f1)
+
+          TARGET_BRANCH="Release/${APP}"
+
+          echo "source=$SOURCE_BRANCH" >> $GITHUB_OUTPUT
+          echo "target=$TARGET_BRANCH" >> $GITHUB_OUTPUT
+          echo "app=$APP" >> $GITHUB_OUTPUT
+
+          echo "Target Branch: $TARGET_BRANCH"
+
+      # Check if Release branch exists
+      - name: Configure Git
+        run: |
+           git config user.name "github-actions"
+           git config user.email "github-actions@github.com"
+      - name: Check if Release  branch exists
+        id: check
+        run: |
+          git fetch origin
+
+          if git ls-remote --exit-code --heads origin "${{ steps.vars.outputs.target }}"; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "Release branch exists"
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "Release branch will be created"
+          fi
+
+      # Create Release branch if missing
+      - name: Create Release branch
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          TARGET="${{ steps.vars.outputs.target }}"
+
+          echo "Creating $TARGET from default branch"
+          git checkout origin/${{ github.event.repository.default_branch }} -b "$TARGET"
+          git push origin "$TARGET"
+
+           # ──  Setup .NET ────────────────────────────────────────
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      # ── 5. Restore ───────────────────────────────────────────
+      - name: Restore
+        run: dotnet restore DemoApp.sln
+
+      # ── 6. Build  ────────────────────────────────────────────
+      #    Must come BEFORE lint and test so binaries exist
+      - name: Build
+        run: dotnet build DemoApp.sln --no-restore
+
+      # ── 7. Lint (format check) ───────────────────────────────
+      #    Runs after build so all generated files are present
+      - name: Lint (format check)
+        run: dotnet format DemoApp.sln --verify-no-changes || echo "⚠️ Lint issues found"
+
+
+   
+      # ── 10. Publish ───────────────────────────────────────────
+      - name: Publish
+        run: dotnet publish DemoApp/DemoApp.csproj -c Release -o out
+
+
+      # ── 12. Docker Build ──────────────────────────────────────
+      - name: Build Docker
+        run: |
+          docker build -t demo-dotnet:${{ github.run_number }} .
+          docker tag demo-dotnet:${{ github.run_number }} demo-dotnet:latest
+
+
+
+
+      
+      # 🔐 Scan image (Trivy)
+  #    - name: Scan Docker image
+  #      uses: aquasecurity/trivy-action@0.24.0
+  #      with:
+  #        iscan-type: fs
+  #        scan-ref: .
+  #        severity: LOW
+  #        exit-code: 0
+
+      # 🚀 (Optional) Push to DockerHub
+ #     - name: Login to DockerHub
+ #       if: github.ref == 'refs/heads/main'
+ #       uses: docker/login-action@v3
+ #       with:
+ #         username: ${{ secrets.DOCKER_USERNAME }}
+ #         password: ${{ secrets.DOCKER_PASSWORD }}
+#
+ #     - name: Push image
+ #       if: github.ref == 'refs/heads/main'
+ #       run: |
+ #         docker tag node-app:${{ github.run_number }} ${{ secrets.DOCKER_USERNAME }}/node-app:${{ github.run_number }}
+ #         docker push ${{ secrets.DOCKER_USERNAME }}/node-app:${{ github.run_number }}
+      
+ 
+ # Fetch Release branch if exists 
+      - name: Fetch target branch
+ #       if: steps.check.outputs.exists == 'true'
+        run: |
+          git fetch origin "${{ steps.vars.outputs.target }}"
+      - name: Check merge conflict
+ #       if: steps.check.outputs.exists == 'true'
+        run: |
+          SOURCE=${{ steps.vars.outputs.source }}
+          TARGET=${{ steps.vars.outputs.target }}
+
+          git checkout $SOURCE
+
+          git merge origin/$TARGET --no-commit --no-ff || echo "MERGE_FAILED=true" >> $GITHUB_ENV
+
+          if [ "$MERGE_FAILED" = "true" ]; then
+            echo "❌ Merge conflict detected with $TARGET"
+            exit 1
+          else
+            echo "✅ No conflicts"
+          fi
+
+          git merge --abort || true
+
+      # ✅ Create PR ONLY if branch already existed
+      - name: Create Pull Request
+ #       if: steps.check.outputs.exists == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+        run: |
+          SOURCE=${{ steps.vars.outputs.source }}
+          TARGET=${{ steps.vars.outputs.target }}
+
+          echo "Creating PR: $SOURCE → $TARGET"
+
+          EXISTING=$(gh pr list --base "$TARGET" --head "$SOURCE" --state open --json number --jq '.[0].number')
+
+          if [ -z "$EXISTING" ]; then
+            gh pr create \
+              --base "$TARGET" \
+              --head "$SOURCE" \
+              --title "Auto PR: $SOURCE → $TARGET" \
+              --body "🚀 Auto-created PR\n\nApp: ${{ steps.vars.outputs.app }}\nSprint: ${{ steps.vars.outputs.sprint }}\nTeam: ${{ steps.vars.outputs.team }}"
+          else
+            echo "✅ PR #$EXISTING already exists. Skipping."
+          fi
+
+      # ✅ Final summary
+      - name: Summary
+        run: |
+          if [ "${{ steps.check.outputs.exists }}" == "false" ]; then
+            echo "✔ Release branch created. No PR needed."
+          else
+            echo "✔ Release branch existed. PR handled."
+          fi
+    

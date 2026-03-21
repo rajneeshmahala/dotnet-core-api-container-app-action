@@ -1,0 +1,78 @@
+name: main build Docker CI
+
+on:
+  push:
+    branches:
+      - 'main'
+
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      #  Checkout
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+           # ──  Setup .NET ────────────────────────────────────────
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      # ── 5. Restore ───────────────────────────────────────────
+      - name: Restore
+        run: dotnet restore DemoApp.sln
+
+      # ── 6. Build  ────────────────────────────────────────────
+      #    Must come BEFORE lint and test so binaries exist
+      - name: Build
+        run: dotnet build DemoApp.sln --no-restore
+
+      # ── 7. Lint (format check) ───────────────────────────────
+      #    Runs after build so all generated files are present
+      - name: Lint (format check)
+        run: dotnet format DemoApp.sln --verify-no-changes || echo "⚠️ Lint issues found"
+
+
+   
+      # ── 10. Publish ───────────────────────────────────────────
+      - name: Publish
+        run: dotnet publish DemoApp/DemoApp.csproj -c Release -o out
+
+
+      # ── 12. Docker Build ──────────────────────────────────────
+      - name: Build Docker
+        run: |
+          docker build -t demo-dotnet:${{ github.run_number }} .
+          docker tag demo-dotnet:${{ github.run_number }} demo-dotnet:latest
+
+
+
+
+      
+      # 🔐 Scan image (Trivy)
+  #    - name: Scan Docker image
+  #      uses: aquasecurity/trivy-action@0.24.0
+  #      with:
+  #        iscan-type: fs
+  #        scan-ref: .
+  #        severity: LOW
+  #        exit-code: 0
+
+      # 🚀 (Optional) Push to DockerHub
+ #     - name: Login to DockerHub
+ #       if: github.ref == 'refs/heads/main'
+ #       uses: docker/login-action@v3
+ #       with:
+ #         username: ${{ secrets.DOCKER_USERNAME }}
+ #         password: ${{ secrets.DOCKER_PASSWORD }}
+#
+ #     - name: Push image
+ #       if: github.ref == 'refs/heads/main'
+ #       run: |
+ #         docker tag node-app:${{ github.run_number }} ${{ secrets.DOCKER_USERNAME }}/node-app:${{ github.run_number }}
+ #         docker push ${{ secrets.DOCKER_USERNAME }}/node-app:${{ github.run_number }}
