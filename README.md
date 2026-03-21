@@ -19,7 +19,7 @@ DemoApp.sln
 │   └── DemoApp.Tests.csproj
 ├── Dockerfile                      # Multi-stage build (sdk → aspnet runtime)
 ├── .dockerignore
-└── .github/
+└── .github/vv
     └── workflows/
         └── build-docker-ci.yml     # CI pipeline
 ```
