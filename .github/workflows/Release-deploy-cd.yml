@@ -1,27 +1,183 @@
-name: Release Deploy to Azure Container App  
+# ============================================================
+#  Release Deploy to Azure Container App (Production)
+#  + Microsoft Teams Notifications (Incoming Webhook)
+#
+#  Triggered automatically after Release Build Docker CI completes
+#
+#  NOTIFICATIONS SENT:
+#    ⏭️  Deploy Skipped (Release Build failed)
+#    🚀  Deployment Started
+#    ✅  Deployment Succeeded (Production Live)
+#    ❌  Deployment Failed
+# ============================================================
+
+name: Release Deploy to Azure Container App
 
 on:
   workflow_run:
     workflows: ["Release build Docker CI"]
     types:
-
       - completed
 
 jobs:
+
+  # ── Notify if upstream build failed — deploy skipped ──────
+  notify-skipped:
+    if: github.event.workflow_run.conclusion != 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: "Notify Teams — Production Deploy Skipped"
+        run: |
+          curl -s -X POST "${{ secrets.TEAMS_WEBHOOK_URL }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "@type": "MessageCard",
+              "@context": "http://schema.org/extensions",
+              "themeColor": "FFA500",
+              "summary": "Production Deployment Skipped",
+              "sections": [{
+                "activityTitle": "⏭️ Production Deployment Skipped — Release Build Did Not Pass",
+                "activitySubtitle": "Release Deploy to Azure Container App was not triggered",
+                "facts": [
+                  { "name": "Upstream Workflow", "value": "'"${{ github.event.workflow_run.name }}"'" },
+                  { "name": "Branch",            "value": "'"${{ github.event.workflow_run.head_branch }}"'" },
+                  { "name": "Build Conclusion",  "value": "'"${{ github.event.workflow_run.conclusion }}"'" },
+                  { "name": "Build Run",         "value": "#'"${{ github.event.workflow_run.run_number }}"'" },
+                  { "name": "Reason",            "value": "Fix the failing Release Build Docker CI run first, then repush" }
+                ]
+              }],
+              "potentialAction": [{
+                "@type": "OpenUri",
+                "name": "View Build Run",
+                "targets": [{ "os": "default", "uri": "'"${{ github.event.workflow_run.html_url }}"'" }]
+              }]
+            }'
+
+  # ── Main deploy job ────────────────────────────────────────
   deploy:
     if: github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
 
     steps:
+
+      # ── 1. Debug Info ──────────────────────────────────────
       - name: Debug Info
         run: |
-          echo "Workflow: ${{ github.event.workflow_run.name }}"
-          echo "Branch: ${{ github.event.workflow_run.head_branch }}"
-          echo "Conclusion: ${{ github.event.workflow_run.conclusion }}"
+          echo "Workflow   : ${{ github.event.workflow_run.name }}"
+          echo "Branch     : ${{ github.event.workflow_run.head_branch }}"
+          echo "Conclusion : ${{ github.event.workflow_run.conclusion }}"
+          echo "Build Run  : #${{ github.event.workflow_run.run_number }}"
 
-      - name: Deployment Step
+      # ── 🔔 NOTIFY: Production Deployment Started ────────────
+      - name: "Notify Teams — Production Deployment Started"
         run: |
-          echo "🚀 Deploying application..."
-          echo "Branch: ${{ github.event.workflow_run.head_branch }}"
-          echo "Build ID: ${{ github.event.workflow_run.run_number }}"
-          echo "✅ Deployed Docker container on Azure Container App"
+          curl -s -X POST "${{ secrets.TEAMS_WEBHOOK_URL }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "@type": "MessageCard",
+              "@context": "http://schema.org/extensions",
+              "themeColor": "0078D4",
+              "summary": "Production Deployment Started",
+              "sections": [{
+                "activityTitle": "🚀 Production Deployment Started — Azure Container App",
+                "activitySubtitle": "Release Build passed — deploying to Production now",
+                "facts": [
+                  { "name": "Branch",       "value": "'"${{ github.event.workflow_run.head_branch }}"'" },
+                  { "name": "Image Tag",    "value": "demo-dotnet:'"${{ github.event.workflow_run.run_number }}"'" },
+                  { "name": "Build Run",    "value": "#'"${{ github.event.workflow_run.run_number }}"'" },
+                  { "name": "Deploy Run",   "value": "#'"${{ github.run_number }}"'" },
+                  { "name": "Triggered by", "value": "'"${{ github.actor }}"'" },
+                  { "name": "Environment",  "value": "🏭 Production — Azure Container App" }
+                ]
+              }],
+              "potentialAction": [{
+                "@type": "OpenUri",
+                "name": "View Deploy Run",
+                "targets": [{ "os": "default", "uri": "'"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"'" }]
+              }]
+            }'
+
+      # ── 2. Deployment Step ─────────────────────────────────
+      - name: Deployment Step
+        id: deploy
+        run: |
+          echo "🚀 Deploying application to Production..."
+          echo "Branch   : ${{ github.event.workflow_run.head_branch }}"
+          echo "Build ID : ${{ github.event.workflow_run.run_number }}"
+          echo "✅ Deployed Docker container on Azure Container App (Production)"
+          # ── Uncomment to enable real Azure deployment ──────
+          # az login --service-principal \
+          #   -u ${{ secrets.AZURE_CLIENT_ID }} \
+          #   -p ${{ secrets.AZURE_CLIENT_SECRET }} \
+          #   --tenant ${{ secrets.AZURE_TENANT_ID }}
+          # az containerapp update \
+          #   --name <your-production-container-app> \
+          #   --resource-group <your-rg> \
+          #   --image ${{ secrets.ACR_LOGIN_SERVER }}/demo-dotnet:${{ github.event.workflow_run.run_number }}
+
+      # ── 🔔 NOTIFY: Production Deployment Succeeded ──────────
+      - name: "Notify Teams — Production Deployment Succeeded"
+        if: success()
+        run: |
+          curl -s -X POST "${{ secrets.TEAMS_WEBHOOK_URL }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "@type": "MessageCard",
+              "@context": "http://schema.org/extensions",
+              "themeColor": "107C10",
+              "summary": "Production Deployment Succeeded",
+              "sections": [{
+                "activityTitle": "✅ Production Deployment Succeeded — Application is Live",
+                "activitySubtitle": "Azure Container App (Production) updated successfully",
+                "facts": [
+                  { "name": "Branch",      "value": "'"${{ github.event.workflow_run.head_branch }}"'" },
+                  { "name": "Image Tag",   "value": "demo-dotnet:'"${{ github.event.workflow_run.run_number }}"'" },
+                  { "name": "Build Run",   "value": "#'"${{ github.event.workflow_run.run_number }}"'" },
+                  { "name": "Deploy Run",  "value": "#'"${{ github.run_number }}"'" },
+                  { "name": "Environment", "value": "🏭 Production — Azure Container App" },
+                  { "name": "Status",      "value": "🟢 Live" }
+                ]
+              }],
+              "potentialAction": [
+                {
+                  "@type": "OpenUri",
+                  "name": "View Deploy Run",
+                  "targets": [{ "os": "default", "uri": "'"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"'" }]
+                },
+                {
+                  "@type": "OpenUri",
+                  "name": "View Build Run",
+                  "targets": [{ "os": "default", "uri": "'"${{ github.event.workflow_run.html_url }}"'" }]
+                }
+              ]
+            }'
+
+      # ── 🔔 NOTIFY: Production Deployment Failed ─────────────
+      - name: "Notify Teams — Production Deployment Failed"
+        if: failure()
+        run: |
+          curl -s -X POST "${{ secrets.TEAMS_WEBHOOK_URL }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "@type": "MessageCard",
+              "@context": "http://schema.org/extensions",
+              "themeColor": "D13438",
+              "summary": "Production Deployment Failed",
+              "sections": [{
+                "activityTitle": "❌ Production Deployment Failed — Immediate Action Required",
+                "activitySubtitle": "Release Build passed but Production deployment step failed",
+                "facts": [
+                  { "name": "Branch",      "value": "'"${{ github.event.workflow_run.head_branch }}"'" },
+                  { "name": "Image Tag",   "value": "demo-dotnet:'"${{ github.event.workflow_run.run_number }}"'" },
+                  { "name": "Build Run",   "value": "#'"${{ github.event.workflow_run.run_number }}"'" },
+                  { "name": "Deploy Run",  "value": "#'"${{ github.run_number }}"'" },
+                  { "name": "Environment", "value": "🏭 Production — Azure Container App" },
+                  { "name": "Action",      "value": "Check Azure credentials, ACR access and container app config immediately" }
+                ]
+              }],
+              "potentialAction": [{
+                "@type": "OpenUri",
+                "name": "View Failed Deploy Run",
+                "targets": [{ "os": "default", "uri": "'"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"'" }]
+              }]
+            }'
