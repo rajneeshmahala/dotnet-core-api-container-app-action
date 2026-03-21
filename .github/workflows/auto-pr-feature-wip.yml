@@ -11,6 +11,7 @@ permissions:
 
 jobs:
   manage-wip:
+    if: startsWith(github.head_ref, 'feature/') && startsWith(github.base_ref, 'wip/')
     runs-on: ubuntu-latest
 
     steps:
