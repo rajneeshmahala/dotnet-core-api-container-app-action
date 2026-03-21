@@ -1,21 +1,42 @@
-name: RC build Docker CI
+# ============================================================
+#  RC Build Docker CI
+#  + Microsoft Teams Notifications (Incoming Webhook)
+#
+#  SETUP — Add this secret to your repository:
+#    Name : TEAMS_WEBHOOK_URL
+#    Value: your Teams Incoming Webhook URL
+#
+#  NOTIFICATIONS SENT:
+#    🚀 Pipeline Started
+#    ✅ Release Branch Created
+#    ❌ Build Failed
+#    ❌ Merge Conflict Detected
+#    🔀 PR Auto-Created
+#    🔄 PR Updated (existing PR)
+#    ✅ Pipeline Success Summary
+#    ❌ Pipeline Failed (catch-all)
+# ============================================================
+
+name: RC Build Docker CI
 
 on:
   push:
     branches:
       - 'RC/*'
-  
+
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-      # 🔄 Checkout
+
+      # ── 1. Checkout ─────────────────────────────────────────
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-# Extract branch info
+
+      # ── 2. Extract Branch Info ───────────────────────────────
       - name: Extract branch info
         id: vars
         run: |
@@ -23,157 +44,392 @@ jobs:
           echo "Processing: $SOURCE_BRANCH"
 
           APP=$(echo "$SOURCE_BRANCH" | cut -d'/' -f2 | cut -d'-' -f1)
-
           TARGET_BRANCH="Release/${APP}"
 
-          echo "source=$SOURCE_BRANCH" >> $GITHUB_OUTPUT
-          echo "target=$TARGET_BRANCH" >> $GITHUB_OUTPUT
-          echo "app=$APP" >> $GITHUB_OUTPUT
+          echo "source=$SOURCE_BRANCH"  >> $GITHUB_OUTPUT
+          echo "target=$TARGET_BRANCH"  >> $GITHUB_OUTPUT
+          echo "app=$APP"               >> $GITHUB_OUTPUT
 
-          echo "Target Branch: $TARGET_BRANCH"
+          echo "✅ APP=$APP | TARGET=$TARGET_BRANCH"
 
-      # Check if Release branch exists
+      # ── 🔔 NOTIFY: Pipeline Started ─────────────────────────
+      - name: "Notify Teams — Pipeline Started"
+        run: |
+          curl -s -X POST "${{ secrets.TEAMS_WEBHOOK_URL }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "@type": "MessageCard",
+              "@context": "http://schema.org/extensions",
+              "themeColor": "0078D4",
+              "summary": "RC Build Docker CI Started",
+              "sections": [{
+                "activityTitle": "🚀 RC Build Docker CI Started",
+                "activitySubtitle": "Build, Docker and Release PR automation",
+                "facts": [
+                  { "name": "Source Branch", "value": "'"${{ steps.vars.outputs.source }}"'" },
+                  { "name": "Target Branch", "value": "'"${{ steps.vars.outputs.target }}"'" },
+                  { "name": "App",           "value": "'"${{ steps.vars.outputs.app }}"'" },
+                  { "name": "Triggered by",  "value": "'"${{ github.actor }}"'" },
+                  { "name": "Run",           "value": "#'"${{ github.run_number }}"'" }
+                ]
+              }],
+              "potentialAction": [{
+                "@type": "OpenUri",
+                "name": "View Run",
+                "targets": [{ "os": "default", "uri": "'"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"'" }]
+              }]
+            }'
+
+      # ── 3. Configure Git ─────────────────────────────────────
       - name: Configure Git
         run: |
-           git config user.name "github-actions"
-           git config user.email "github-actions@github.com"
-      - name: Check if Release  branch exists
+          git config user.name  "github-actions"
+          git config user.email "github-actions@github.com"
+
+      # ── 4. Check if Release Branch Exists ───────────────────
+      - name: Check if Release branch exists
         id: check
         run: |
           git fetch origin
-
           if git ls-remote --exit-code --heads origin "${{ steps.vars.outputs.target }}"; then
-            echo "exists=true" >> $GITHUB_OUTPUT
-            echo "Release branch exists"
+            echo "exists=true"  >> $GITHUB_OUTPUT
+            echo "✅ Release branch exists"
           else
             echo "exists=false" >> $GITHUB_OUTPUT
-            echo "Release branch will be created"
+            echo "🚀 Release branch will be created"
           fi
 
-      # Create Release branch if missing
+      # ── 5. Create Release Branch (only if missing) ──────────
       - name: Create Release branch
         if: steps.check.outputs.exists == 'false'
         run: |
           TARGET="${{ steps.vars.outputs.target }}"
-
-          echo "Creating $TARGET from default branch"
           git checkout origin/${{ github.event.repository.default_branch }} -b "$TARGET"
           git push origin "$TARGET"
+          echo "✅ Created: $TARGET"
 
-           # ──  Setup .NET ────────────────────────────────────────
+      # ── 🔔 NOTIFY: Release Branch Created ───────────────────
+      - name: "Notify Teams — Release Branch Created"
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          curl -s -X POST "${{ secrets.TEAMS_WEBHOOK_URL }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "@type": "MessageCard",
+              "@context": "http://schema.org/extensions",
+              "themeColor": "107C10",
+              "summary": "Release Branch Created",
+              "sections": [{
+                "activityTitle": "✅ Release Branch Created from default branch",
+                "facts": [
+                  { "name": "Release Branch", "value": "'"${{ steps.vars.outputs.target }}"'" },
+                  { "name": "Source Branch",  "value": "'"${{ steps.vars.outputs.source }}"'" },
+                  { "name": "App",            "value": "'"${{ steps.vars.outputs.app }}"'" },
+                  { "name": "Created by",     "value": "'"${{ github.actor }}"'" },
+                  { "name": "Note",           "value": "Push again to trigger a PR into the Release branch" }
+                ]
+              }],
+              "potentialAction": [{
+                "@type": "OpenUri",
+                "name": "View Run",
+                "targets": [{ "os": "default", "uri": "'"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"'" }]
+              }]
+            }'
+
+      # ── 6. Setup .NET + Restore ─────────────────────────────
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
 
-      # ── 5. Restore ───────────────────────────────────────────
       - name: Restore
         run: dotnet restore DemoApp.sln
 
-      # ── 6. Build  ────────────────────────────────────────────
-      #    Must come BEFORE lint and test so binaries exist
+      # ── 7. Build ─────────────────────────────────────────────
       - name: Build
+        id: build
         run: dotnet build DemoApp.sln --no-restore
 
-      # ── 7. Lint (format check) ───────────────────────────────
-      #    Runs after build so all generated files are present
+      - name: "Notify Teams — Build Failed"
+        if: failure() && steps.build.outcome == 'failure'
+        run: |
+          curl -s -X POST "${{ secrets.TEAMS_WEBHOOK_URL }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "@type": "MessageCard",
+              "@context": "http://schema.org/extensions",
+              "themeColor": "D13438",
+              "summary": "Build Failed",
+              "sections": [{
+                "activityTitle": "❌ Build Failed — Pipeline Blocked",
+                "facts": [
+                  { "name": "Branch", "value": "'"${{ github.ref_name }}"'" },
+                  { "name": "App",    "value": "'"${{ steps.vars.outputs.app }}"'" },
+                  { "name": "Run",    "value": "#'"${{ github.run_number }}"'" },
+                  { "name": "Action", "value": "Fix build errors and repush to RC branch" }
+                ]
+              }],
+              "potentialAction": [{
+                "@type": "OpenUri",
+                "name": "View Failed Run",
+                "targets": [{ "os": "default", "uri": "'"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"'" }]
+              }]
+            }'
+
+      # ── 8. Lint ──────────────────────────────────────────────
       - name: Lint (format check)
         run: dotnet format DemoApp.sln --verify-no-changes || echo "⚠️ Lint issues found"
 
-
-   
-      # ── 10. Publish ───────────────────────────────────────────
+      # ── 9. Publish ───────────────────────────────────────────
       - name: Publish
         run: dotnet publish DemoApp/DemoApp.csproj -c Release -o out
 
-
-      # ── 12. Docker Build ──────────────────────────────────────
+      # ── 10. Docker Build ─────────────────────────────────────
       - name: Build Docker
         run: |
           docker build -t demo-dotnet:${{ github.run_number }} .
           docker tag demo-dotnet:${{ github.run_number }} demo-dotnet:latest
+          echo "✅ Built demo-dotnet:${{ github.run_number }}"
 
+      # ── 11. Trivy Image Scan (optional — uncomment when ready)
+      # - name: Scan Docker image
+      #   uses: aquasecurity/trivy-action@v0.20.0
+      #   with:
+      #     image-ref:      demo-dotnet:${{ github.run_number }}
+      #     severity:       CRITICAL
+      #     exit-code:      1
+      #     ignore-unfixed: true
 
+      # ── 12. DockerHub Push (optional — uncomment when ready) ─
+      # - name: Login to DockerHub
+      #   if: github.ref == 'refs/heads/main'
+      #   uses: docker/login-action@v3
+      #   with:
+      #     username: ${{ secrets.DOCKER_USERNAME }}
+      #     password: ${{ secrets.DOCKER_PASSWORD }}
+      # - name: Push image
+      #   if: github.ref == 'refs/heads/main'
+      #   run: |
+      #     docker tag demo-dotnet:${{ github.run_number }} \
+      #       ${{ secrets.DOCKER_USERNAME }}/demo-dotnet:${{ github.run_number }}
+      #     docker push ${{ secrets.DOCKER_USERNAME }}/demo-dotnet:${{ github.run_number }}
 
-
-      
-      # 🔐 Scan image (Trivy)
-  #    - name: Scan Docker image
-  #      uses: aquasecurity/trivy-action@0.24.0
-  #      with:
-  #        iscan-type: fs
-  #        scan-ref: .
-  #        severity: LOW
-  #        exit-code: 0
-
-      # 🚀 (Optional) Push to DockerHub
- #     - name: Login to DockerHub
- #       if: github.ref == 'refs/heads/main'
- #       uses: docker/login-action@v3
- #       with:
- #         username: ${{ secrets.DOCKER_USERNAME }}
- #         password: ${{ secrets.DOCKER_PASSWORD }}
-#
- #     - name: Push image
- #       if: github.ref == 'refs/heads/main'
- #       run: |
- #         docker tag node-app:${{ github.run_number }} ${{ secrets.DOCKER_USERNAME }}/node-app:${{ github.run_number }}
- #         docker push ${{ secrets.DOCKER_USERNAME }}/node-app:${{ github.run_number }}
-      
- 
- # Fetch Release branch if exists 
+      # ── 13. Fetch Release Branch ─────────────────────────────
       - name: Fetch target branch
- #       if: steps.check.outputs.exists == 'true'
-        run: |
-          git fetch origin "${{ steps.vars.outputs.target }}"
+        run: git fetch origin "${{ steps.vars.outputs.target }}"
+
+      # ── 14. Merge Conflict Check ─────────────────────────────
       - name: Check merge conflict
- #       if: steps.check.outputs.exists == 'true'
         run: |
-          SOURCE=${{ steps.vars.outputs.source }}
-          TARGET=${{ steps.vars.outputs.target }}
+          SOURCE="${{ steps.vars.outputs.source }}"
+          TARGET="${{ steps.vars.outputs.target }}"
 
-          git checkout $SOURCE
-
-          git merge origin/$TARGET --no-commit --no-ff || echo "MERGE_FAILED=true" >> $GITHUB_ENV
-
-          if [ "$MERGE_FAILED" = "true" ]; then
-            echo "❌ Merge conflict detected with $TARGET"
-            exit 1
-          else
-            echo "✅ No conflicts"
-          fi
+          git checkout "$SOURCE"
+          git merge "origin/$TARGET" --no-commit --no-ff \
+            || echo "MERGE_FAILED=true" >> $GITHUB_ENV
 
           git merge --abort || true
 
-      # ✅ Create PR ONLY if branch already existed
+          if [ "$MERGE_FAILED" = "true" ]; then
+
+            curl -s -X POST "${{ secrets.TEAMS_WEBHOOK_URL }}" \
+              -H "Content-Type: application/json" \
+              -d '{
+                "@type": "MessageCard",
+                "@context": "http://schema.org/extensions",
+                "themeColor": "D13438",
+                "summary": "Merge Conflict Detected",
+                "sections": [{
+                  "activityTitle": "❌ Merge Conflict Detected — PR Blocked",
+                  "activitySubtitle": "Manual resolution required before PR can be raised to Release",
+                  "facts": [
+                    { "name": "RC Branch",      "value": "'"$SOURCE"'" },
+                    { "name": "Release Branch", "value": "'"$TARGET"'" },
+                    { "name": "App",            "value": "'"${{ steps.vars.outputs.app }}"'" },
+                    { "name": "Fix",            "value": "git fetch origin && git merge origin/'"$TARGET"' — resolve conflicts — git push" }
+                  ]
+                }],
+                "potentialAction": [{
+                  "@type": "OpenUri",
+                  "name": "View Run",
+                  "targets": [{ "os": "default", "uri": "'"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"'" }]
+                }]
+              }'
+
+            echo "❌ Merge conflict detected with $TARGET"
+            exit 1
+          fi
+          echo "✅ No conflicts"
+
+      # ── 15. Create Pull Request ──────────────────────────────
       - name: Create Pull Request
- #       if: steps.check.outputs.exists == 'true'
+        id: pr
         env:
           GH_TOKEN: ${{ secrets.PAT_TOKEN }}
         run: |
-          SOURCE=${{ steps.vars.outputs.source }}
-          TARGET=${{ steps.vars.outputs.target }}
+          SOURCE="${{ steps.vars.outputs.source }}"
+          TARGET="${{ steps.vars.outputs.target }}"
 
-          echo "Creating PR: $SOURCE → $TARGET"
+          EXISTING=$(gh pr list \
+            --base "$TARGET" --head "$SOURCE" \
+            --state open --json number,url --jq '.[0]')
 
-          EXISTING=$(gh pr list --base "$TARGET" --head "$SOURCE" --state open --json number --jq '.[0].number')
+          EXISTING_NUM=$(echo "$EXISTING" | jq -r '.number // empty')
+          EXISTING_URL=$(echo "$EXISTING" | jq -r '.url // empty')
 
-          if [ -z "$EXISTING" ]; then
+          if [ -z "$EXISTING_NUM" ]; then
             gh pr create \
-              --base "$TARGET" \
-              --head "$SOURCE" \
+              --base  "$TARGET" \
+              --head  "$SOURCE" \
               --title "Auto PR: $SOURCE → $TARGET" \
-              --body "🚀 Auto-created PR\n\nApp: ${{ steps.vars.outputs.app }}\nSprint: ${{ steps.vars.outputs.sprint }}\nTeam: ${{ steps.vars.outputs.team }}"
+              --body  "$(printf '🚀 Auto-created PR\n\n**App:** ${{ steps.vars.outputs.app }}')"
+
+            PR_URL=$(gh pr list \
+              --base "$TARGET" --head "$SOURCE" \
+              --state open --json url --jq '.[0].url')
+
+            echo "pr_status=created" >> $GITHUB_OUTPUT
+            echo "pr_url=${PR_URL}"  >> $GITHUB_OUTPUT
+            echo "✅ PR created: $PR_URL"
           else
-            echo "✅ PR #$EXISTING already exists. Skipping."
+            echo "pr_status=existing"     >> $GITHUB_OUTPUT
+            echo "pr_url=${EXISTING_URL}" >> $GITHUB_OUTPUT
+            echo "✅ PR #$EXISTING_NUM already exists. Skipping."
           fi
 
-      # ✅ Final summary
-      - name: Summary
+      # ── 🔔 NOTIFY: PR Auto-Created ───────────────────────────
+      - name: "Notify Teams — PR Auto-Created"
+        if: success() && steps.pr.outputs.pr_status == 'created'
+        run: |
+          curl -s -X POST "${{ secrets.TEAMS_WEBHOOK_URL }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "@type": "MessageCard",
+              "@context": "http://schema.org/extensions",
+              "themeColor": "107C10",
+              "summary": "Release PR Auto-Created",
+              "sections": [{
+                "activityTitle": "🔀 Release Pull Request Auto-Created",
+                "activitySubtitle": "'"${{ steps.vars.outputs.source }}"' → '"${{ steps.vars.outputs.target }}"'",
+                "facts": [
+                  { "name": "PR URL",        "value": "'"${{ steps.pr.outputs.pr_url }}"'" },
+                  { "name": "App",           "value": "'"${{ steps.vars.outputs.app }}"'" },
+                  { "name": "Image",         "value": "demo-dotnet:'"${{ github.run_number }}"'" },
+                  { "name": "Created by",    "value": "'"${{ github.actor }}"'" },
+                  { "name": "Run",           "value": "#'"${{ github.run_number }}"'" },
+                  { "name": "Action needed", "value": "Review and approve the Release PR" }
+                ]
+              }],
+              "potentialAction": [{
+                "@type": "OpenUri",
+                "name": "Review PR",
+                "targets": [{ "os": "default", "uri": "'"${{ steps.pr.outputs.pr_url }}"'" }]
+              }]
+            }'
+
+      # ── 🔔 NOTIFY: PR Already Exists (Updated) ───────────────
+      - name: "Notify Teams — PR Updated"
+        if: success() && steps.pr.outputs.pr_status == 'existing'
+        run: |
+          curl -s -X POST "${{ secrets.TEAMS_WEBHOOK_URL }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "@type": "MessageCard",
+              "@context": "http://schema.org/extensions",
+              "themeColor": "0078D4",
+              "summary": "Release PR Updated by New Push",
+              "sections": [{
+                "activityTitle": "🔄 Existing Release PR Updated by New Push",
+                "activitySubtitle": "'"${{ steps.vars.outputs.source }}"' → '"${{ steps.vars.outputs.target }}"'",
+                "facts": [
+                  { "name": "PR URL",   "value": "'"${{ steps.pr.outputs.pr_url }}"'" },
+                  { "name": "App",      "value": "'"${{ steps.vars.outputs.app }}"'" },
+                  { "name": "Image",    "value": "demo-dotnet:'"${{ github.run_number }}"'" },
+                  { "name": "Pushed by","value": "'"${{ github.actor }}"'" },
+                  { "name": "Run",      "value": "#'"${{ github.run_number }}"'" }
+                ]
+              }],
+              "potentialAction": [{
+                "@type": "OpenUri",
+                "name": "View PR",
+                "targets": [{ "os": "default", "uri": "'"${{ steps.pr.outputs.pr_url }}"'" }]
+              }]
+            }'
+
+      # ── 🔔 NOTIFY: Pipeline Success ──────────────────────────
+      - name: "Notify Teams — Pipeline Success"
+        if: success()
         run: |
           if [ "${{ steps.check.outputs.exists }}" == "false" ]; then
-            echo "✔ Release branch created. No PR needed."
+            RESULT="New Release branch created. Push again to trigger PR."
           else
-            echo "✔ Release branch existed. PR handled."
+            RESULT="Build and Docker passed. PR created or already open."
           fi
-    
+
+          curl -s -X POST "${{ secrets.TEAMS_WEBHOOK_URL }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "@type": "MessageCard",
+              "@context": "http://schema.org/extensions",
+              "themeColor": "107C10",
+              "summary": "RC Build Docker CI Passed",
+              "sections": [{
+                "activityTitle": "✅ RC Build Docker CI Completed Successfully",
+                "facts": [
+                  { "name": "RC Branch",      "value": "'"${{ steps.vars.outputs.source }}"'" },
+                  { "name": "Release Branch", "value": "'"${{ steps.vars.outputs.target }}"'" },
+                  { "name": "App",            "value": "'"${{ steps.vars.outputs.app }}"'" },
+                  { "name": "Image",          "value": "demo-dotnet:'"${{ github.run_number }}"'" },
+                  { "name": "Run",            "value": "#'"${{ github.run_number }}"'" },
+                  { "name": "Result",         "value": "'"$RESULT"'" }
+                ]
+              }],
+              "potentialAction": [{
+                "@type": "OpenUri",
+                "name": "View Run",
+                "targets": [{ "os": "default", "uri": "'"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"'" }]
+              }]
+            }'
+
+      # ── 🔔 NOTIFY: Pipeline Failed (catch-all) ───────────────
+      - name: "Notify Teams — Pipeline Failed"
+        if: failure()
+        run: |
+          curl -s -X POST "${{ secrets.TEAMS_WEBHOOK_URL }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "@type": "MessageCard",
+              "@context": "http://schema.org/extensions",
+              "themeColor": "D13438",
+              "summary": "RC Build Docker CI Failed",
+              "sections": [{
+                "activityTitle": "❌ RC Build Docker CI Failed",
+                "facts": [
+                  { "name": "Branch",      "value": "'"${{ github.ref_name }}"'" },
+                  { "name": "App",         "value": "'"${{ steps.vars.outputs.app }}"'" },
+                  { "name": "Triggered by","value": "'"${{ github.actor }}"'" },
+                  { "name": "Run",         "value": "#'"${{ github.run_number }}"'" }
+                ]
+              }],
+              "potentialAction": [{
+                "@type": "OpenUri",
+                "name": "View Failed Run",
+                "targets": [{ "os": "default", "uri": "'"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"'" }]
+              }]
+            }'
+
+      # ── 16. Summary ───────────────────────────────────────────
+      - name: Summary
+        if: always()
+        run: |
+          echo "================================================"
+          if [ "${{ steps.check.outputs.exists }}" == "false" ]; then
+            echo "  ✔ Release branch created. No PR needed."
+          else
+            echo "  ✔ Release branch existed. PR handled."
+          fi
+          echo "  Source : ${{ steps.vars.outputs.source }}"
+          echo "  Target : ${{ steps.vars.outputs.target }}"
+          echo "  Image  : demo-dotnet:${{ github.run_number }}"
+          echo "  Run    : #${{ github.run_number }}"
+          echo "================================================"

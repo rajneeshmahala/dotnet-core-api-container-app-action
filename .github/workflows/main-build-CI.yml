@@ -1,3 +1,17 @@
+# ============================================================
+#  Main Build Docker CI
+#  + Microsoft Teams Notifications (Incoming Webhook)
+#
+#  Triggers on every push to main branch
+#
+#  NOTIFICATIONS SENT:
+#    🚀 Pipeline Started
+#    ❌ Build Failed
+#    ❌ Docker Build Failed
+#    ✅ Pipeline Success
+#    ❌ Pipeline Failed (catch-all)
+# ============================================================
+
 name: main build Docker CI
 
 on:
@@ -5,74 +19,207 @@ on:
     branches:
       - 'main'
 
-
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-      #  Checkout
+
+      # ── 1. Checkout ─────────────────────────────────────────
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-           # ──  Setup .NET ────────────────────────────────────────
+      # ── 🔔 NOTIFY: Pipeline Started ─────────────────────────
+      - name: "Notify Teams — Pipeline Started"
+        run: |
+          curl -s -X POST "${{ secrets.TEAMS_WEBHOOK_URL }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "@type": "MessageCard",
+              "@context": "http://schema.org/extensions",
+              "themeColor": "0078D4",
+              "summary": "Main Build Docker CI Started",
+              "sections": [{
+                "activityTitle": "🚀 Main Build Docker CI Started",
+                "activitySubtitle": "Build and Docker image creation on main branch",
+                "facts": [
+                  { "name": "Branch",      "value": "main" },
+                  { "name": "Commit",      "value": "'"${{ github.sha }}"'" },
+                  { "name": "Triggered by","value": "'"${{ github.actor }}"'" },
+                  { "name": "Run",         "value": "#'"${{ github.run_number }}"'" },
+                  { "name": "Repository",  "value": "'"${{ github.repository }}"'" }
+                ]
+              }],
+              "potentialAction": [{
+                "@type": "OpenUri",
+                "name": "View Run",
+                "targets": [{ "os": "default", "uri": "'"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"'" }]
+              }]
+            }'
+
+      # ── 2. Setup .NET + Restore ─────────────────────────────
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
 
-      # ── 5. Restore ───────────────────────────────────────────
       - name: Restore
         run: dotnet restore DemoApp.sln
 
-      # ── 6. Build  ────────────────────────────────────────────
-      #    Must come BEFORE lint and test so binaries exist
+      # ── 3. Build ─────────────────────────────────────────────
       - name: Build
+        id: build
         run: dotnet build DemoApp.sln --no-restore
 
-      # ── 7. Lint (format check) ───────────────────────────────
-      #    Runs after build so all generated files are present
+      - name: "Notify Teams — Build Failed"
+        if: failure() && steps.build.outcome == 'failure'
+        run: |
+          curl -s -X POST "${{ secrets.TEAMS_WEBHOOK_URL }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "@type": "MessageCard",
+              "@context": "http://schema.org/extensions",
+              "themeColor": "D13438",
+              "summary": "Main Branch Build Failed",
+              "sections": [{
+                "activityTitle": "❌ Main Branch Build Failed",
+                "activitySubtitle": "dotnet build failed on main — immediate attention required",
+                "facts": [
+                  { "name": "Branch",      "value": "main" },
+                  { "name": "Commit",      "value": "'"${{ github.sha }}"'" },
+                  { "name": "Triggered by","value": "'"${{ github.actor }}"'" },
+                  { "name": "Run",         "value": "#'"${{ github.run_number }}"'" },
+                  { "name": "Action",      "value": "Fix build errors on main immediately" }
+                ]
+              }],
+              "potentialAction": [{
+                "@type": "OpenUri",
+                "name": "View Failed Run",
+                "targets": [{ "os": "default", "uri": "'"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"'" }]
+              }]
+            }'
+
+      # ── 4. Lint ──────────────────────────────────────────────
       - name: Lint (format check)
         run: dotnet format DemoApp.sln --verify-no-changes || echo "⚠️ Lint issues found"
 
-
-   
-      # ── 10. Publish ───────────────────────────────────────────
+      # ── 5. Publish ───────────────────────────────────────────
       - name: Publish
         run: dotnet publish DemoApp/DemoApp.csproj -c Release -o out
 
-
-      # ── 12. Docker Build ──────────────────────────────────────
+      # ── 6. Docker Build ──────────────────────────────────────
       - name: Build Docker
+        id: docker
         run: |
           docker build -t demo-dotnet:${{ github.run_number }} .
           docker tag demo-dotnet:${{ github.run_number }} demo-dotnet:latest
+          echo "✅ Built demo-dotnet:${{ github.run_number }}"
 
+      - name: "Notify Teams — Docker Build Failed"
+        if: failure() && steps.docker.outcome == 'failure'
+        run: |
+          curl -s -X POST "${{ secrets.TEAMS_WEBHOOK_URL }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "@type": "MessageCard",
+              "@context": "http://schema.org/extensions",
+              "themeColor": "D13438",
+              "summary": "Docker Build Failed on Main",
+              "sections": [{
+                "activityTitle": "❌ Docker Build Failed on Main Branch",
+                "activitySubtitle": "Docker image could not be built from main",
+                "facts": [
+                  { "name": "Branch",      "value": "main" },
+                  { "name": "Image",       "value": "demo-dotnet:'"${{ github.run_number }}"'" },
+                  { "name": "Commit",      "value": "'"${{ github.sha }}"'" },
+                  { "name": "Triggered by","value": "'"${{ github.actor }}"'" },
+                  { "name": "Run",         "value": "#'"${{ github.run_number }}"'" },
+                  { "name": "Action",      "value": "Check Dockerfile and repush" }
+                ]
+              }],
+              "potentialAction": [{
+                "@type": "OpenUri",
+                "name": "View Failed Run",
+                "targets": [{ "os": "default", "uri": "'"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"'" }]
+              }]
+            }'
 
+      # ── 7. Trivy Image Scan (optional — uncomment when ready)─
+      # - name: Scan Docker image
+      #   uses: aquasecurity/trivy-action@v0.20.0
+      #   with:
+      #     image-ref:      demo-dotnet:${{ github.run_number }}
+      #     severity:       CRITICAL
+      #     exit-code:      1
+      #     ignore-unfixed: true
 
+      # ── 8. DockerHub Push (optional — uncomment when ready) ──
+      # - name: Login to DockerHub
+      #   uses: docker/login-action@v3
+      #   with:
+      #     username: ${{ secrets.DOCKER_USERNAME }}
+      #     password: ${{ secrets.DOCKER_PASSWORD }}
+      # - name: Push image
+      #   run: |
+      #     docker tag demo-dotnet:${{ github.run_number }} \
+      #       ${{ secrets.DOCKER_USERNAME }}/demo-dotnet:${{ github.run_number }}
+      #     docker push ${{ secrets.DOCKER_USERNAME }}/demo-dotnet:${{ github.run_number }}
 
-      
-      # 🔐 Scan image (Trivy)
-  #    - name: Scan Docker image
-  #      uses: aquasecurity/trivy-action@0.24.0
-  #      with:
-  #        iscan-type: fs
-  #        scan-ref: .
-  #        severity: LOW
-  #        exit-code: 0
+      # ── 🔔 NOTIFY: Pipeline Success ──────────────────────────
+      - name: "Notify Teams — Pipeline Success"
+        if: success()
+        run: |
+          curl -s -X POST "${{ secrets.TEAMS_WEBHOOK_URL }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "@type": "MessageCard",
+              "@context": "http://schema.org/extensions",
+              "themeColor": "107C10",
+              "summary": "Main Build Docker CI Passed",
+              "sections": [{
+                "activityTitle": "✅ Main Build Docker CI Completed Successfully",
+                "activitySubtitle": "main branch is healthy — Docker image ready",
+                "facts": [
+                  { "name": "Branch",      "value": "main" },
+                  { "name": "Image",       "value": "demo-dotnet:'"${{ github.run_number }}"'" },
+                  { "name": "Commit",      "value": "'"${{ github.sha }}"'" },
+                  { "name": "Triggered by","value": "'"${{ github.actor }}"'" },
+                  { "name": "Run",         "value": "#'"${{ github.run_number }}"'" }
+                ]
+              }],
+              "potentialAction": [{
+                "@type": "OpenUri",
+                "name": "View Run",
+                "targets": [{ "os": "default", "uri": "'"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"'" }]
+              }]
+            }'
 
-      # 🚀 (Optional) Push to DockerHub
- #     - name: Login to DockerHub
- #       if: github.ref == 'refs/heads/main'
- #       uses: docker/login-action@v3
- #       with:
- #         username: ${{ secrets.DOCKER_USERNAME }}
- #         password: ${{ secrets.DOCKER_PASSWORD }}
-#
- #     - name: Push image
- #       if: github.ref == 'refs/heads/main'
- #       run: |
- #         docker tag node-app:${{ github.run_number }} ${{ secrets.DOCKER_USERNAME }}/node-app:${{ github.run_number }}
- #         docker push ${{ secrets.DOCKER_USERNAME }}/node-app:${{ github.run_number }}
+      # ── 🔔 NOTIFY: Pipeline Failed (catch-all) ───────────────
+      - name: "Notify Teams — Pipeline Failed"
+        if: failure()
+        run: |
+          curl -s -X POST "${{ secrets.TEAMS_WEBHOOK_URL }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "@type": "MessageCard",
+              "@context": "http://schema.org/extensions",
+              "themeColor": "D13438",
+              "summary": "Main Build Docker CI Failed",
+              "sections": [{
+                "activityTitle": "❌ Main Build Docker CI Failed",
+                "activitySubtitle": "main branch build is broken — immediate attention required",
+                "facts": [
+                  { "name": "Branch",      "value": "main" },
+                  { "name": "Commit",      "value": "'"${{ github.sha }}"'" },
+                  { "name": "Triggered by","value": "'"${{ github.actor }}"'" },
+                  { "name": "Run",         "value": "#'"${{ github.run_number }}"'" }
+                ]
+              }],
+              "potentialAction": [{
+                "@type": "OpenUri",
+                "name": "View Failed Run",
+                "targets": [{ "os": "default", "uri": "'"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"'" }]
+              }]
+            }'

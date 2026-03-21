@@ -1,4 +1,4 @@
-# DemoApp — .NET 8 Web API  #feature d1 update  AI
+# DemoApp — .NET 8 Web API  #
 
 Demo project for the **Build + Docker CI** GitHub Actions pipeline.
 
