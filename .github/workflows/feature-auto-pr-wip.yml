@@ -253,13 +253,15 @@ jobs:
           EXISTING_URL=$(echo "$EXISTING" | jq -r '.url // empty')
 
           if [ -z "$EXISTING_NUM" ]; then
-            PR_URL=$(gh pr create \
+            gh pr create \
               --base  "$TARGET" \
               --head  "$SOURCE" \
               --title "Auto PR: $SOURCE → $TARGET" \
-              --body  "$(printf '🚀 Auto-created PR\n\n**App:** ${{ steps.vars.outputs.app }}\n**Sprint:** ${{ steps.vars.outputs.sprint }}\n**Team:** ${{ steps.vars.outputs.team }}')" \
-              --json url --jq '.url' 2>/dev/null || \
-              gh pr view --head "$SOURCE" --base "$TARGET" --json url --jq '.url')
+              --body  "$(printf '🚀 Auto-created PR\n\n**App:** ${{ steps.vars.outputs.app }}\n**Sprint:** ${{ steps.vars.outputs.sprint }}\n**Team:** ${{ steps.vars.outputs.team }}')"
+
+            PR_URL=$(gh pr list \
+              --base "$TARGET" --head "$SOURCE" \
+              --state open --json url --jq '.[0].url')
 
             echo "pr_status=created"    >> $GITHUB_OUTPUT
             echo "pr_url=${PR_URL}"     >> $GITHUB_OUTPUT
