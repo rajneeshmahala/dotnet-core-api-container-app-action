@@ -7,7 +7,7 @@ Demo project for the **Build + Docker CI** GitHub Actions pipeline.
 ```
 DemoApp.sln
 ├── DemoApp/                        # ASP.NET Core Web API
-│   ├── Controllers/ddcdcdc
+│   ├── Controllers/ddcdcdcgb
 │   │   └── ProductsController.cs   # CRUD endpoints for /api/products
 │   ├── Models/
 │   │   └── Product.cs
