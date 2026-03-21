@@ -95,9 +95,10 @@ jobs:
       - name: Trivy Image Scan
         uses: aquasecurity/trivy-action@v0.20.0
         with:
-          image-ref: demo-dotnet:${{ github.run_number }}
-          severity:  HIGH
-          exit-code: 1
+          image-ref:      demo-dotnet:${{ github.run_number }}
+          severity:       HIGH,CRITICAL
+          exit-code:      1
+          ignore-unfixed: true   # skip CVEs with no fix available (e.g. OS-level libc)
 
       # ── 14. Summary ───────────────────────────────────────────
       - name: Pipeline Summary
